@@ -14,7 +14,7 @@ interface Article {
 async function getArticle(id: string): Promise<Article | null> {
   try {
     const { rows } = await sql`SELECT * FROM articles WHERE id = ${id}`;
-    return rows[0] || null;
+    return (rows[0] as Article) || null;
   } catch (error) {
     console.error(error);
     return null;
