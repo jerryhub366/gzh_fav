@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 58, "column": 0}, "map": {"version":3,"sources":["file:///Users/Zhuanz/Projects/gzh_fav/app/api/articles/route.ts"],"sourcesContent":["import { NextResponse } from 'next/server';\nimport * as fs from 'fs';\nimport * as path from 'path';\n\nexport async function GET() {\n  try {\n    const filePath = path.join(process.cwd(), 'data', 'articles.json');\n    if (!fs.existsSync(filePath)) {\n      return NextResponse.json([]);\n    }\n    const data = fs.readFileSync(filePath, 'utf8');\n    const articles = JSON.parse(data);\n    return NextResponse.json(articles);\n  } catch (error) {\n    console.error(error);\n    return NextResponse.json({ error: 'Failed to load articles' }, { status: 500 });\n  }\n}"],"names":[],"mappings":";;;;AAAA;AACA;AACA;;;;AAEO,eAAe;IACpB,IAAI;QACF,MAAM,WAAW,yGAAS,CAAC,QAAQ,GAAG,IAAI,QAAQ;QAClD,IAAI,CAAC,2GAAa,CAAC,WAAW;YAC5B,OAAO,gJAAY,CAAC,IAAI,CAAC,EAAE;QAC7B;QACA,MAAM,OAAO,6GAAe,CAAC,UAAU;QACvC,MAAM,WAAW,KAAK,KAAK,CAAC;QAC5B,OAAO,gJAAY,CAAC,IAAI,CAAC;IAC3B,EAAE,OAAO,OAAO;QACd,QAAQ,KAAK,CAAC;QACd,OAAO,gJAAY,CAAC,IAAI,CAAC;YAAE,OAAO;QAA0B,GAAG;YAAE,QAAQ;QAAI;IAC/E;AACF"}}]
+}
