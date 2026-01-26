@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
-import * as fs from 'fs';
-import * as path from 'path';
+import { sql } from '@vercel/postgres';
 import { createHash } from 'crypto';
 
 interface Article {
@@ -57,15 +56,11 @@ export async function POST(request: NextRequest) {
       collectedAt: new Date().toISOString(),
     };
 
-    // Save to JSON file
-    const filePath = path.join(process.cwd(), 'data', 'articles.json');
-    let articles: Article[] = [];
-    if (fs.existsSync(filePath)) {
-      const data = fs.readFileSync(filePath, 'utf8');
-      articles = JSON.parse(data);
-    }
-    articles.push(article);
-    fs.writeFileSync(filePath, JSON.stringify(articles, null, 2));
+    // Save to database
+    await sql`
+      INSERT INTO articles (id, url, title, author, content, published_at, collected_at)
+      VALUES (${id}, ${url}, ${title}, ${author}, ${content}, ${publishedAt}, ${article.collectedAt})
+    `;
 
     return NextResponse.json({ shortLink: `/${id}`, article });
   } catch (error) {
