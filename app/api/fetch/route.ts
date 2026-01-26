@@ -23,16 +23,26 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch the article
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    if (!response.ok) {
+      return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
+    }
     const html = await response.text();
 
     // Parse HTML
     const $ = cheerio.load(html);
 
-    const title = $('title').text() || $('#activity-name').text() || 'Unknown Title';
-    const author = $('#js_name').text() || $('#profileBt a').text() || 'Unknown Author';
-    const publishedAt = $('#publish_time').text() || new Date().toISOString();
-    const content = $('#js_content').html() || '';
+    const title = $('#activity-name').text().trim() || $('title').text().trim() || 'Unknown Title';
+    const author = $('#js_name').text().trim() || $('#profileBt a').text().trim() || 'Unknown Author';
+    const publishedAt = $('meta[property="article:published_time"]').attr('content') || $('#publish_time').text().trim() || new Date().toISOString();
+    const contentHtml = $('#js_content').html() || '';
+
+    // Clean content
+    const content = contentHtml.replace(/<script[\s\S]*?<\/script>/gi, '').trim();
 
     // Generate short ID
     const id = createHash('md5').update(url).digest('hex').substring(0, 6);
@@ -59,7 +69,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ shortLink: `/${id}`, article });
   } catch (error) {
-    console.error(error);
+    console.error('Error fetching article:', error);
     return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
   }
 }
