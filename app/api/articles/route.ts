@@ -4,7 +4,7 @@ import { sql } from '@vercel/postgres';
 export async function GET() {
   try {
     const { rows } = await sql`SELECT * FROM articles ORDER BY collected_at DESC`;
-    const mapped = rows.map((r: any) => ({
+    const mapped = rows.map((r: any, i: number) => ({
       id: r.id,
       url: r.url,
       title: r.title,
@@ -12,6 +12,7 @@ export async function GET() {
       content: r.content,
       publishedAt: r.published_at ? new Date(r.published_at).toISOString() : null,
       collectedAt: r.collected_at ? new Date(r.collected_at).toISOString() : null,
+      index: i + 1,
     }));
 
     return NextResponse.json(mapped);

@@ -10,6 +10,7 @@ interface Article {
   content: string;
   publishedAt: string;
   collectedAt: string;
+  index?: number;
 }
 
 export default function Home() {
@@ -86,7 +87,7 @@ export default function Home() {
           <div key={article.id} className="border border-gray-200 rounded-lg p-4">
             <h3 className="text-xl font-semibold mb-2">
               <a href={`/${article.id}`} className="text-blue-600 hover:underline">
-                {article.title}
+                {article.index ? `${article.index}. ` : ''}{article.title}
               </a>
             </h3>
             <p className="text-gray-600 mb-1">Author: {article.author}</p>
