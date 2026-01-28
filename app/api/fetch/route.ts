@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import * as cheerio from 'cheerio';
 import { sql } from '@vercel/postgres';
 import { createHash } from 'crypto';
+import ensureSeq from '../../../lib/db/ensureSeq';
 
 interface Article {
   id: string;
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
     };
 
     // Save to database
+    // Ensure seq exists and is ready
+    await ensureSeq();
+
     await sql`
       INSERT INTO articles (id, url, title, author, content, published_at, collected_at)
       VALUES (${id}, ${url}, ${title}, ${author}, ${content}, ${publishedAt}, ${article.collectedAt})
