@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+
+const PAGE_SIZE = 20;
 
 interface Article {
   id: string;
@@ -16,18 +18,55 @@ interface Article {
 export default function Home() {
   const [url, setUrl] = useState('');
   const [articles, setArticles] = useState<Article[]>([]);
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [message, setMessage] = useState('');
+  const sentinelRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    fetchArticles();
+  const hasMore = articles.length < total;
+
+  const fetchArticles = useCallback(async (offset: number) => {
+    const isFirstPage = offset === 0;
+    if (isFirstPage) setLoading(true);
+    else setLoadingMore(true);
+
+    try {
+      const res = await fetch(`/api/articles?limit=${PAGE_SIZE}&offset=${offset}`);
+      const data = await res.json();
+      if (isFirstPage) {
+        setArticles(data.articles);
+      } else {
+        setArticles((prev) => [...prev, ...data.articles]);
+      }
+      setTotal(data.total);
+    } finally {
+      if (isFirstPage) setLoading(false);
+      else setLoadingMore(false);
+    }
   }, []);
 
-  const fetchArticles = async () => {
-    const res = await fetch('/api/articles');
-    const data = await res.json();
-    setArticles(data);
-  };
+  useEffect(() => {
+    fetchArticles(0);
+  }, [fetchArticles]);
+
+  // IntersectionObserver for infinite scroll
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting && hasMore && !loadingMore) {
+          fetchArticles(articles.length);
+        }
+      },
+      { rootMargin: '200px' },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, loadingMore, articles.length, fetchArticles]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,7 +84,9 @@ export default function Home() {
       if (res.ok) {
         setMessage(`Article collected! Short link: ${data.shortLink}`);
         setUrl('');
-        fetchArticles();
+        // Reset and re-fetch from the beginning so the new article appears at top
+        setArticles([]);
+        fetchArticles(0);
       } else {
         setMessage(data.error || 'Failed to collect article');
       }
@@ -97,6 +138,9 @@ export default function Home() {
             </a>
           </div>
         ))}
+        {/* Sentinel for infinite scroll */}
+        <div ref={sentinelRef} />
+        {loadingMore && <p className="text-center text-gray-500 py-4">Loading...</p>}
       </div>
     </main>
   );
