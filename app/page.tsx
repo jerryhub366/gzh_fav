@@ -9,7 +9,7 @@ interface Article {
   url: string;
   title: string;
   author: string;
-  content: string;
+
   publishedAt: string;
   collectedAt: string;
   index?: number;
