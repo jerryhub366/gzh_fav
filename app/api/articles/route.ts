@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
     const offset = Math.max(0, Number(searchParams.get('offset')) || 0);
 
     const [{ rows }, { rows: countRows }] = await Promise.all([
-      sql`SELECT * FROM articles ORDER BY seq DESC NULLS LAST, collected_at DESC LIMIT ${limit} OFFSET ${offset}`,
+      sql`SELECT id, url, title, author, published_at, collected_at, seq FROM articles ORDER BY seq DESC NULLS LAST, collected_at DESC LIMIT ${limit} OFFSET ${offset}`,
       sql`SELECT COUNT(*) AS total FROM articles`,
     ]);
 
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
       url: r.url,
       title: r.title,
       author: r.author,
-      content: r.content,
+
       publishedAt: r.published_at ? new Date(r.published_at).toISOString() : null,
       collectedAt: r.collected_at ? new Date(r.collected_at).toISOString() : null,
       index: r.seq != null ? Number(r.seq) : offset + i + 1,
