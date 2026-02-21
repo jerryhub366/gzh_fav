@@ -108,7 +108,7 @@ export default function Home() {
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             placeholder="Paste WeChat article URL here"
-            className="flex-1 p-3 border border-gray-300 rounded-lg"
+            className="flex-1 p-3 border border-gray-300 rounded-lg bg-white text-gray-900 placeholder-gray-400 dark:bg-gray-800 dark:border-gray-600 dark:text-white dark:placeholder-gray-400"
             required
           />
           <button
