@@ -132,7 +132,7 @@ export default function Home() {
               </a>
             </h3>
             <p className="text-gray-600 mb-1">Author: {article.author}</p>
-            <p className="text-gray-600 mb-2">Collected: {new Date(article.collectedAt).toLocaleDateString()}</p>
+            <p className="text-gray-600 mb-2">Collected: {new Date(article.collectedAt).toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</p>
             <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
               Original Link
             </a>
