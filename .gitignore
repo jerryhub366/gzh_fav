@@ -28,5 +28,11 @@ yarn-error.log*
 # Vercel
 .vercel
 
+# TypeScript
+tsconfig.tsbuildinfo
+
+# Claude local settings
+.claude/settings.local.json
+
 # Data (runtime generated)
 data/articles.json
