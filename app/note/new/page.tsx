@@ -22,7 +22,7 @@ export default function NewNote() {
       });
       const data = await res.json();
       if (res.ok) {
-        router.push('/?tab=notes');
+        window.location.href = '/?tab=notes';
       } else {
         setError(data.error || 'Failed to save');
       }
