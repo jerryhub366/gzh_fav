@@ -23,7 +23,12 @@ interface Note {
 type Tab = 'articles' | 'notes';
 
 export default function Home() {
-  const [tab, setTab] = useState<Tab>('articles');
+  const [tab, setTab] = useState<Tab>(() => {
+    if (typeof window !== 'undefined') {
+      return (new URLSearchParams(window.location.search).get('tab') as Tab) || 'articles';
+    }
+    return 'articles';
+  });
 
   // Articles state
   const [url, setUrl] = useState('');
