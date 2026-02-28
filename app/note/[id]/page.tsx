@@ -30,7 +30,7 @@ export default async function NotePage({ params }: { params: Promise<{ id: strin
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="mb-6">
-        <a href="/" className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm">
+        <a href="/?tab=notes" className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm">
           ← Back
         </a>
       </div>

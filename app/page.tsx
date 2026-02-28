@@ -170,28 +170,12 @@ export default function Home() {
 
       {/* Tab switcher */}
       <div className="flex items-center justify-between mb-6">
-        <div className="flex border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-          <button
-            onClick={() => setTab('articles')}
-            className={`px-5 py-2 text-sm font-medium transition-colors ${
-              tab === 'articles'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            }`}
-          >
-            Articles
-          </button>
-          <button
-            onClick={() => setTab('notes')}
-            className={`px-5 py-2 text-sm font-medium transition-colors ${
-              tab === 'notes'
-                ? 'bg-blue-600 text-white'
-                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            }`}
-          >
-            Notes
-          </button>
-        </div>
+        <button
+          onClick={() => setTab(tab === 'articles' ? 'notes' : 'articles')}
+          className="px-5 py-2 text-sm font-medium border border-gray-300 dark:border-gray-600 rounded-lg text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+        >
+          {tab === 'articles' ? 'Notes' : 'Articles'}
+        </button>
 
         <a
           href="/note/new"
@@ -273,10 +257,10 @@ export default function Home() {
             <a
               key={note.id}
               href={`/note/${note.id}`}
-              className="block border border-gray-200 rounded-lg p-4 hover:border-gray-300 dark:border-gray-700 dark:hover:border-gray-600 transition-colors"
+              className="block border border-gray-400 rounded-lg p-4 hover:border-gray-500 dark:border-gray-500 dark:hover:border-gray-400 transition-colors"
             >
-              <p className="text-gray-900 dark:text-white mb-2 line-clamp-3 whitespace-pre-line">
-                {note.content}
+              <p className="text-gray-900 dark:text-white mb-2 whitespace-pre-line">
+                {note.content.length > 150 ? note.content.slice(0, 150) + '…' : note.content}
               </p>
               <p className="text-gray-500 text-sm">
                 {new Date(note.createdAt).toLocaleString(undefined, {
