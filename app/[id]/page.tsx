@@ -29,12 +29,23 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
     notFound();
   }
 
+  const hasContent = article.content?.trim();
+
   return (
     <div className="max-w-4xl mx-auto p-6">
       <h1 className="text-3xl font-bold mb-4">{article.title}</h1>
       <p className="text-gray-600 mb-2">Author: {article.author}</p>
       <p className="text-gray-600 mb-4">Published: {new Date(article.published_at).toLocaleDateString()}</p>
-      <div dangerouslySetInnerHTML={{ __html: article.content }} />
+      {hasContent ? (
+        <div dangerouslySetInnerHTML={{ __html: article.content }} />
+      ) : (
+        <div className="rounded-lg border border-gray-200 p-4 text-gray-700">
+          <p className="mb-3">Readable content was not extracted for this URL.</p>
+          <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+            Open original link
+          </a>
+        </div>
+      )}
     </div>
   );
 }
