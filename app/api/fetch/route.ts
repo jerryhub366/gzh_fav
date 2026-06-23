@@ -72,18 +72,35 @@ function decodeJsString(value: string) {
 }
 
 function textToHtml(value: string) {
-  return value
+  const $ = cheerio.load('<div></div>');
+  const container = $('div');
+  container.text(value);
+
+  container.html(
+    (container.html() || '')
+      .replace(/&lt;(\/?a\b.*?)&gt;/g, '<$1>')
+      .replace(/(<a\b[^>]*>)(.*?)(?=<br>|$)/g, '$1$2</a>'),
+  );
+  container
+    .find('a[href]')
+    .each((_, element) => {
+      const href = $(element).attr('href');
+      if (href) $(element).attr('href', href.replace(/&amp;/g, '&'));
+    });
+
+  return container
+    .html()
     .split(/\n{2,}/)
-    .map((paragraph) => normalizeWhitespace(paragraph))
+    .map((paragraph) => paragraph.trim().replace(/\n/g, '<br>'))
     .filter(Boolean)
-    .map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`)
+    .map((paragraph) => `<p>${paragraph}</p>`)
     .join('\n');
 }
 
 function getWeChatTextPageHtml(rawHtml: string) {
   const match =
-    rawHtml.match(/text_page_info\s*:\s*\{[\s\S]*?content_noencode\s*:\s*'((?:\\'|[^'])*)'/) ||
-    rawHtml.match(/text_page_info\s*:\s*\{[\s\S]*?content\s*:\s*'((?:\\'|[^'])*)'/);
+    rawHtml.match(/content_noencode\s*:\s*'((?:\\.|[^'\\])*)'/) ||
+    rawHtml.match(/text_page_info\s*:\s*\{[\s\S]*?content\s*:\s*'((?:\\.|[^'\\])*)'/);
   if (!match) return '';
 
   const decoded = cheerio.load('<div></div>').root().text(decodeJsString(match[1])).text();
@@ -119,6 +136,15 @@ function isBlockedOrScriptLike(text: string) {
 
   const scriptMarkers = ['function ', 'var ', 'const ', 'let ', 'window.', 'document.', '__INLINE_SCRIPT__'];
   const markerCount = scriptMarkers.filter((marker) => normalized.includes(marker)).length;
+  if (
+    normalized.includes('window.cgiDataNew') ||
+    normalized.includes('window.__ajaxTransferConfig') ||
+    normalized.includes('text_page_info') ||
+    normalized.includes('content_noencode')
+  ) {
+    return true;
+  }
+
   return markerCount >= 3 && normalized.length > 1000;
 }
 
@@ -146,7 +172,9 @@ function getContentHtml($: cheerio.CheerioAPI) {
   let bestHtml = '';
   let bestScore = 0;
   $('body *').each((_, element) => {
+    if (element.tagName === 'script' || element.tagName === 'style') return;
     const $element = $(element);
+    if ($element.parents('script, style').length) return;
     if ($element.find('article, main, section, div, p').length > 200) return;
 
     const text = normalizeWhitespace($element.text());
@@ -267,7 +295,11 @@ export async function POST(request: NextRequest) {
       firstAttr($, ['time[datetime]'], 'datetime') ||
       firstText($, ['#publish_time', 'time']) ||
       new Date().toISOString();
-    const contentHtml = getWeChatTextPageHtml(html) || getContentHtml($) || '';
+    const extractedContentHtml = getContentHtml($);
+    const contentHtml =
+      extractedContentHtml && !isBlockedOrScriptLike(getReadableText(extractedContentHtml))
+        ? extractedContentHtml
+        : getWeChatTextPageHtml(html) || '';
 
     // Clean content
     const content =

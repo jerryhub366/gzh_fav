@@ -31,3 +31,14 @@ body {
     text-wrap: balance;
   }
 }
+
+.article-content p {
+  margin: 0 0 1em;
+  line-height: 1.8;
+}
+
+.article-content a {
+  color: #2563eb;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}

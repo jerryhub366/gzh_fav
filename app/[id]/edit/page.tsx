@@ -108,7 +108,7 @@ export default function EditArticlePage() {
         contentEditable
         suppressContentEditableWarning
         dangerouslySetInnerHTML={{ __html: content }}
-        className="min-h-[60vh] rounded-lg border border-gray-200 bg-white p-5 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="article-content min-h-[60vh] rounded-lg border border-gray-200 bg-white p-5 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
     </main>
   );

@@ -43,7 +43,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
       <p className="text-gray-600 mb-2">Author: {article.author}</p>
       <p className="text-gray-600 mb-4">Published: {new Date(article.published_at).toLocaleDateString()}</p>
       {hasContent ? (
-        <div dangerouslySetInnerHTML={{ __html: proxyArticleImages(article.content) }} />
+        <div className="article-content" dangerouslySetInnerHTML={{ __html: proxyArticleImages(article.content) }} />
       ) : (
         <div className="rounded-lg border border-gray-200 p-4 text-gray-700">
           <p className="mb-3">Readable content was not extracted for this URL.</p>
