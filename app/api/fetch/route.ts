@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import { sql } from '@vercel/postgres';
 import { createHash } from 'crypto';
 import ensureSeq from '../../../lib/db/ensureSeq';
+import { sanitizeArticleHtml } from '../../../lib/html';
 
 interface Article {
   id: string;
@@ -90,49 +91,7 @@ function getWeChatTextPageHtml(rawHtml: string) {
 }
 
 function cleanContent(html: string, baseUrl: URL) {
-  const $ = cheerio.load(html || '');
-  $('script, style, iframe, object, embed, form, input, textarea, select, button, noscript').remove();
-
-  $('*').each((_, element) => {
-    const attribs = $(element).attr() || {};
-    for (const attr of Object.keys(attribs)) {
-      const lower = attr.toLowerCase();
-      const value = attribs[attr];
-      if (
-        lower.startsWith('on') ||
-        lower === 'style' ||
-        lower.startsWith('data-') ||
-        lower === 'srcset' ||
-        value?.trim().toLowerCase().startsWith('javascript:')
-      ) {
-        $(element).removeAttr(attr);
-      }
-    }
-  });
-
-  $('a[href]').each((_, element) => {
-    const href = $(element).attr('href');
-    if (!href) return;
-    try {
-      $(element).attr('href', new URL(href, baseUrl).toString());
-      $(element).attr('target', '_blank');
-      $(element).attr('rel', 'noopener noreferrer');
-    } catch {
-      $(element).removeAttr('href');
-    }
-  });
-
-  $('img[src], video[src], audio[src], source[src]').each((_, element) => {
-    const src = $(element).attr('src');
-    if (!src) return;
-    try {
-      $(element).attr('src', new URL(src, baseUrl).toString());
-    } catch {
-      $(element).removeAttr('src');
-    }
-  });
-
-  return $.root().html()?.trim() || '';
+  return sanitizeArticleHtml(html, baseUrl);
 }
 
 function getReadableText(html: string) {
