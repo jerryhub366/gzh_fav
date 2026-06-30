@@ -2,9 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import ensureSeq from '../../../lib/db/ensureSeq';
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': 'https://agent.ladebuid.com',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+};
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
+
 export async function GET(request: NextRequest) {
   try {
-    // Ensure seq column and sequence exist before querying
     await ensureSeq();
 
     const { searchParams } = request.nextUrl;
@@ -22,15 +31,14 @@ export async function GET(request: NextRequest) {
       url: r.url,
       title: r.title,
       author: r.author,
-
       publishedAt: r.published_at ? new Date(r.published_at).toISOString() : null,
       collectedAt: r.collected_at ? new Date(r.collected_at).toISOString() : null,
       index: r.seq != null ? Number(r.seq) : offset + i + 1,
     }));
 
-    return NextResponse.json({ articles: mapped, total });
+    return NextResponse.json({ articles: mapped, total }, { headers: corsHeaders });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: 'Failed to load articles' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to load articles' }, { status: 500, headers: corsHeaders });
   }
 }
