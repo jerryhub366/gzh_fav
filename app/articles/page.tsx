@@ -78,7 +78,19 @@ export default function ArticlesPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage(`Article collected! Short link: ${data.shortLink}`);
+        const firstSaved = data.collectedAt
+          ? new Date(data.collectedAt).toLocaleString(undefined, {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+              hour: '2-digit',
+              minute: '2-digit',
+            })
+          : '';
+        const prefix = data.existed ? '已收藏过' : '收藏成功';
+        setMessage(
+          `${prefix}！最早入库时间：${firstSaved}（${data.shortLink}）`,
+        );
         setUrl('');
         setArticles([]);
         fetchArticles(0);
