@@ -245,7 +245,9 @@ export async function POST(request: NextRequest) {
           title = EXCLUDED.title,
           author = EXCLUDED.author,
           content = EXCLUDED.content,
-          published_at = EXCLUDED.published_at
+          published_at = EXCLUDED.published_at,
+          collected_at = EXCLUDED.collected_at,
+          seq = nextval('articles_seq')
       `;
 
       return NextResponse.json({ shortLink: `/${id}`, article });
@@ -332,7 +334,9 @@ export async function POST(request: NextRequest) {
         title = EXCLUDED.title,
         author = EXCLUDED.author,
         content = EXCLUDED.content,
-        published_at = EXCLUDED.published_at
+        published_at = EXCLUDED.published_at,
+        collected_at = EXCLUDED.collected_at,
+        seq = nextval('articles_seq')
     `;
 
     return NextResponse.json({ shortLink: `/${id}`, article });
