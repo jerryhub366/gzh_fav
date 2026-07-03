@@ -237,7 +237,7 @@ export async function POST(request: NextRequest) {
       };
 
       await ensureSeq();
-      await sql`
+      const { rows: [saved] } = await sql`
         INSERT INTO articles (id, url, title, author, content, published_at, collected_at)
         VALUES (${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content}, ${article.publishedAt}, ${article.collectedAt})
         ON CONFLICT (id) DO UPDATE SET
@@ -246,9 +246,15 @@ export async function POST(request: NextRequest) {
           author = EXCLUDED.author,
           content = EXCLUDED.content,
           published_at = EXCLUDED.published_at
+        RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
       `;
 
-      return NextResponse.json({ shortLink: `/${id}`, article });
+      return NextResponse.json({
+        shortLink: `/${id}`,
+        article,
+        collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
+        existed: Boolean(saved?.existed),
+      });
     }
     const html = await response.text();
 
@@ -324,7 +330,7 @@ export async function POST(request: NextRequest) {
     // Ensure seq exists and is ready
     await ensureSeq();
 
-    await sql`
+    const { rows: [saved] } = await sql`
       INSERT INTO articles (id, url, title, author, content, published_at, collected_at)
       VALUES (${id}, ${article.url}, ${title}, ${author}, ${content}, ${publishedAt}, ${article.collectedAt})
       ON CONFLICT (id) DO UPDATE SET
@@ -333,9 +339,15 @@ export async function POST(request: NextRequest) {
         author = EXCLUDED.author,
         content = EXCLUDED.content,
         published_at = EXCLUDED.published_at
+      RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
     `;
 
-    return NextResponse.json({ shortLink: `/${id}`, article });
+    return NextResponse.json({
+      shortLink: `/${id}`,
+      article,
+      collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
+      existed: Boolean(saved?.existed),
+    });
   } catch (error) {
     console.error('Error fetching article:', error);
     return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
