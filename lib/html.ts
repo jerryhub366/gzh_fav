@@ -14,12 +14,34 @@ function proxiedImageSrc(src: string) {
   return src;
 }
 
+// WeChat bakes explicit dark text colors (e.g. color: rgba(0,0,0,.9)) and white
+// backgrounds into inline styles. Left in place, that text turns invisible in the
+// app's dark mode (black-on-black), which reads as missing characters. Strip color
+// declarations so text inherits the page's theme foreground instead.
+const THEME_UNSAFE_PROPS = new Set(['color', 'background-color', 'background']);
+
+function stripThemeColors($: cheerio.CheerioAPI) {
+  $('[style]').each((_, element) => {
+    const style = $(element).attr('style') || '';
+    const kept = style
+      .split(';')
+      .map((decl) => decl.trim())
+      .filter(Boolean)
+      .filter((decl) => !THEME_UNSAFE_PROPS.has(decl.split(':')[0]?.trim().toLowerCase()));
+    if (kept.length) $(element).attr('style', kept.join('; '));
+    else $(element).removeAttr('style');
+  });
+  $('[color]').each((_, element) => $(element).removeAttr('color'));
+  $('[bgcolor]').each((_, element) => $(element).removeAttr('bgcolor'));
+}
+
 export function proxyArticleImages(html: string) {
   const $ = cheerio.load(html || '');
   $('img[src]').each((_, element) => {
     const src = $(element).attr('src');
     if (src) $(element).attr('src', proxiedImageSrc(src));
   });
+  stripThemeColors($);
 
   return $.root().html()?.trim() || '';
 }
@@ -71,6 +93,8 @@ export function sanitizeArticleHtml(html: string, baseUrl?: URL) {
       $(element).removeAttr('src');
     }
   });
+
+  stripThemeColors($);
 
   return $.root().html()?.trim() || '';
 }
