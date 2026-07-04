@@ -119,6 +119,74 @@ function getReadableText(html: string) {
     .trim();
 }
 
+function isXHost(hostname: string) {
+  return /(^|\.)(x\.com|twitter\.com)$/i.test(hostname);
+}
+
+// Engagement chrome that X appends to the tweet body (counts + labels). These
+// labels don't occur alone in tweet prose, so removing standalone-label leaves
+// (and the bare number right before them) is safe.
+const X_STAT_LABEL =
+  /^(Views?|Reposts?|Retweets?|Likes?|Quotes?|Bookmarks?|Replies|Reply|次查看|查看|转推|转发|喜欢|引用|书签|回复)$/i;
+const X_STAT_COMBINED =
+  /^[\d.,]+[KMB]?\s*(Views?|Reposts?|Retweets?|Likes?|Quotes?|Bookmarks?|Replies)$/i;
+
+function stripXChrome(html: string) {
+  const $ = cheerio.load(html);
+  $('*').each((_, element) => {
+    const $el = $(element);
+    if ($el.children().length) return; // only touch leaf nodes
+    const text = normalizeWhitespace($el.text());
+    if (!text) return;
+    if (X_STAT_COMBINED.test(text) || X_STAT_LABEL.test(text)) {
+      const prev = $el.prev();
+      if (X_STAT_LABEL.test(text) && prev.length && /^[\d.,]+[KMB]?$/.test(normalizeWhitespace(prev.text()))) {
+        prev.remove();
+      }
+      $el.remove();
+    }
+  });
+  return $.root().html()?.trim() || html;
+}
+
+// X/Twitter server HTML only exposes og:title ("Name (@handle) on X") and
+// og:description (the tweet body); there is no publish-time meta and the account
+// name is buried in og:site_name. Derive a useful author/title/date instead.
+function extractXMeta($: cheerio.CheerioAPI, parsedUrl: URL, contentText: string) {
+  const ogTitle = firstAttr($, ['meta[property="og:title"]', 'meta[name="twitter:title"]'], 'content');
+  const handleFromPath = parsedUrl.pathname.split('/').filter(Boolean)[0] || '';
+
+  let author = '';
+  const named = ogTitle.match(/^(.*?)\s*\(@(\w+)\)\s*on\s*X$/i) || ogTitle.match(/^(.*?)\s*\(@(\w+)\)/);
+  if (named) {
+    author = `${named[1].trim()} (@${named[2]})`;
+  } else if (handleFromPath && !['i', 'home', 'status'].includes(handleFromPath.toLowerCase())) {
+    author = `@${handleFromPath}`;
+  }
+
+  const ogDesc = firstAttr($, ['meta[property="og:description"]', 'meta[name="description"]'], 'content');
+  const body = normalizeWhitespace(ogDesc || contentText || '');
+  let title = '';
+  if (body) {
+    const firstChunk = body.split(/[。！？\n]|\.\s/)[0].trim() || body;
+    title = firstChunk.length > 46 ? `${firstChunk.slice(0, 46)}…` : firstChunk;
+  }
+
+  let publishedAt = '';
+  const zh = contentText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  const en = contentText.match(/([A-Z][a-z]{2})\s+(\d{1,2}),?\s+(\d{4})/);
+  const hm = contentText.match(/(\d{1,2}):(\d{2})/);
+  if (zh) {
+    const dt = new Date(Date.UTC(Number(zh[1]), Number(zh[2]) - 1, Number(zh[3]), hm ? Number(hm[1]) : 0, hm ? Number(hm[2]) : 0));
+    if (!isNaN(dt.getTime())) publishedAt = dt.toISOString();
+  } else if (en) {
+    const dt = new Date(`${en[1]} ${en[2]}, ${en[3]} UTC`);
+    if (!isNaN(dt.getTime())) publishedAt = dt.toISOString();
+  }
+
+  return { title, author, publishedAt };
+}
+
 function isBlockedOrScriptLike(text: string) {
   const normalized = normalizeWhitespace(text);
   if (!normalized) return true;
@@ -261,7 +329,7 @@ export async function POST(request: NextRequest) {
     // Parse HTML
     const $ = cheerio.load(html);
 
-    const title =
+    let title =
       firstText($, ['#activity-name', 'h1']) ||
       firstAttr(
         $,
@@ -270,7 +338,7 @@ export async function POST(request: NextRequest) {
       ) ||
       $('title').text().trim() ||
       fallbackTitle(parsedUrl);
-    const author =
+    let author =
       firstText($, ['#js_name', '#profileBt a', '.author', '.byline', '[rel="author"]']) ||
       firstAttr(
         $,
@@ -284,7 +352,7 @@ export async function POST(request: NextRequest) {
         'content',
       ) ||
       parsedUrl.hostname.replace(/^www\./, '');
-    const publishedAt =
+    let publishedAt =
       firstAttr(
         $,
         [
@@ -302,10 +370,18 @@ export async function POST(request: NextRequest) {
       firstText($, ['#publish_time', 'time']) ||
       new Date().toISOString();
     const extractedContentHtml = getContentHtml($);
-    const contentHtml =
+    let contentHtml =
       extractedContentHtml && !isBlockedOrScriptLike(getReadableText(extractedContentHtml))
         ? extractedContentHtml
         : getWeChatTextPageHtml(html) || '';
+
+    if (isXHost(parsedUrl.hostname)) {
+      const xMeta = extractXMeta($, parsedUrl, getReadableText(contentHtml));
+      if (xMeta.author) author = xMeta.author;
+      if (xMeta.title) title = xMeta.title;
+      if (xMeta.publishedAt) publishedAt = xMeta.publishedAt;
+      contentHtml = stripXChrome(contentHtml);
+    }
 
     // Clean content
     const content =
