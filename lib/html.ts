@@ -31,8 +31,12 @@ function stripThemeColors($: cheerio.CheerioAPI) {
     if (kept.length) $(element).attr('style', kept.join('; '));
     else $(element).removeAttr('style');
   });
-  $('[color]').each((_, element) => $(element).removeAttr('color'));
-  $('[bgcolor]').each((_, element) => $(element).removeAttr('bgcolor'));
+  $('[color]').each((_, element) => {
+    $(element).removeAttr('color');
+  });
+  $('[bgcolor]').each((_, element) => {
+    $(element).removeAttr('bgcolor');
+  });
 }
 
 export function proxyArticleImages(html: string) {
