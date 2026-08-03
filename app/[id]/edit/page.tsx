@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useParams } from 'next/navigation';
+import { ADMIN_STORAGE_KEY, adminHeaders, getAdminSession } from '../../../lib/adminClient';
 
 interface Article {
   id: string;
@@ -11,35 +13,58 @@ interface Article {
 }
 
 export default function EditArticlePage() {
+  const params = useParams<{ id: string }>();
   const editorRef = useRef<HTMLDivElement>(null);
-  const [id, setId] = useState('');
+  const id = params.id;
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
   const [url, setUrl] = useState('');
   const [content, setContent] = useState('');
+  const [adminToken, setAdminToken] = useState('');
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    setId(window.location.pathname.split('/')[1] || '');
-  }, []);
-
-  useEffect(() => {
     if (!id) return;
 
-    fetch(`/api/articles/${id}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (!data.article) throw new Error(data.error || 'Failed to load article');
+    let active = true;
+
+    async function load() {
+      const session = await getAdminSession();
+      if (!active) return;
+
+      setAuthorized(session.admin);
+      setAdminToken(session.token);
+
+      if (!session.admin) {
+        setError(session.authEnabled ? 'Admin access required.' : 'Admin access is not configured.');
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/articles/${id}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok || !data.article) throw new Error(data.error || 'Failed to load article');
         const article = data.article as Article;
         setTitle(article.title);
         setAuthor(article.author);
         setUrl(article.url);
         setContent(article.content || '');
-      })
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load article');
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    load();
+
+    return () => {
+      active = false;
+    };
   }, [id]);
 
   const handleSave = async () => {
@@ -50,7 +75,10 @@ export default function EditArticlePage() {
     try {
       const res = await fetch(`/api/articles/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...adminHeaders(adminToken),
+        },
         body: JSON.stringify({
           title,
           author,
@@ -58,7 +86,13 @@ export default function EditArticlePage() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Failed to save');
+      if (!res.ok) {
+        if (res.status === 403) {
+          window.localStorage.removeItem(ADMIN_STORAGE_KEY);
+          setAuthorized(false);
+        }
+        throw new Error(data.error || 'Failed to save');
+      }
       window.location.href = data.shortLink;
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save');
@@ -69,6 +103,17 @@ export default function EditArticlePage() {
 
   if (loading) {
     return <main className="max-w-4xl mx-auto p-6 text-gray-500">Loading...</main>;
+  }
+
+  if (!authorized) {
+    return (
+      <main className="max-w-4xl mx-auto p-6">
+        <a href={`/${id}`} className="text-sm text-gray-500 hover:text-gray-700">
+          Back
+        </a>
+        <p className="mt-6 text-red-600">{error || 'Admin access required.'}</p>
+      </main>
+    );
   }
 
   return (

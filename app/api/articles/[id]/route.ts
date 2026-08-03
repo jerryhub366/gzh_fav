@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { proxyArticleImages, sanitizeArticleHtml } from '../../../../lib/html';
+import { ADMIN_TOKEN_HEADER, isAdminToken } from '../../../../lib/admin';
 
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -35,6 +36,10 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    if (!isAdminToken(request.headers.get(ADMIN_TOKEN_HEADER))) {
+      return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+    }
+
     const { id } = await params;
     const { title, author, content } = await request.json();
 
