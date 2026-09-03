@@ -6,6 +6,8 @@ import ensureSeq from '../../../lib/db/ensureSeq';
 import ensureArticleWorkflow from '../../../lib/db/ensureArticleWorkflow';
 import { sanitizeArticleHtml } from '../../../lib/html';
 import { isAdminRequest } from '../../../lib/admin';
+import { extractDedaoArticle, isDedaoUrl } from '../../../lib/extractors/dedao';
+import { fetchXArticle, isXUrl } from '../../../lib/extractors/x';
 
 interface Article {
   id: string;
@@ -142,13 +144,10 @@ function getReadableText(html: string) {
     .trim();
 }
 
-function isXHost(hostname: string) {
-  return /(^|\.)(x\.com|twitter\.com)$/i.test(hostname);
-}
-
 function sourceType(url: URL) {
   if (url.hostname.endsWith('mp.weixin.qq.com')) return 'wechat';
-  if (isXHost(url.hostname)) return 'x';
+  if (isXUrl(url)) return 'x';
+  if (isDedaoUrl(url)) return 'dedao';
   return 'web';
 }
 
@@ -314,66 +313,77 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Only HTTP and HTTPS URLs are supported' }, { status: 400 });
     }
 
-    // Fetch the article
-    const response = await fetch(parsedUrl.toString(), {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        Referer: parsedUrl.hostname.endsWith('mp.weixin.qq.com') ? 'https://mp.weixin.qq.com/' : parsedUrl.origin,
-        'User-Agent': USER_AGENT,
-      },
-    });
-    if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
-    }
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
-      const id = createHash('md5').update(parsedUrl.toString()).digest('hex').substring(0, 6);
-      const collectedAt = new Date().toISOString();
-      const article: Article = {
-        id,
-        url: parsedUrl.toString(),
-        title: fallbackTitle(parsedUrl),
-        author: parsedUrl.hostname.replace(/^www\./, ''),
-        content: fallbackContent(parsedUrl, `This URL points to ${contentType}, so no web page body was extracted.`),
-        publishedAt: collectedAt,
-        collectedAt,
-      };
+    let specializedExtraction = isXUrl(parsedUrl) ? await fetchXArticle(parsedUrl) : null;
+    let html = '';
+    let effectiveUrl = parsedUrl;
 
-      await Promise.all([ensureSeq(), ensureArticleWorkflow()]);
-      const { rows: [saved] } = await sql`
-        INSERT INTO articles (
-          id, url, title, author, content, published_at, collected_at,
-          source_type, extraction_status, extraction_method, extraction_error, extracted_at
-        )
-        VALUES (
-          ${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content},
-          ${article.publishedAt}, ${article.collectedAt}, ${sourceType(parsedUrl)},
-          'link_only', 'non_html', ${`Unsupported content type: ${contentType}`}, ${article.collectedAt}
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          url = EXCLUDED.url,
-          title = EXCLUDED.title,
-          author = EXCLUDED.author,
-          content = EXCLUDED.content,
-          published_at = EXCLUDED.published_at,
-          source_type = EXCLUDED.source_type,
-          extraction_status = EXCLUDED.extraction_status,
-          extraction_method = EXCLUDED.extraction_method,
-          extraction_error = EXCLUDED.extraction_error,
-          extracted_at = EXCLUDED.extracted_at
-        RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
-      `;
-
-      return NextResponse.json({
-        shortLink: `/${id}`,
-        article,
-        collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
-        existed: Boolean(saved?.existed),
-        extractionStatus: 'link_only',
+    if (!specializedExtraction) {
+      const response = await fetch(parsedUrl.toString(), {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          Referer: parsedUrl.hostname.endsWith('mp.weixin.qq.com') ? 'https://mp.weixin.qq.com/' : parsedUrl.origin,
+          'User-Agent': USER_AGENT,
+        },
+        signal: AbortSignal.timeout(15_000),
       });
+      if (!response.ok) {
+        return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
+      }
+      effectiveUrl = new URL(response.url || parsedUrl.toString());
+      const contentType = response.headers.get('content-type') || '';
+      if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+        const id = createHash('md5').update(parsedUrl.toString()).digest('hex').substring(0, 6);
+        const collectedAt = new Date().toISOString();
+        const article: Article = {
+          id,
+          url: parsedUrl.toString(),
+          title: fallbackTitle(parsedUrl),
+          author: parsedUrl.hostname.replace(/^www\./, ''),
+          content: fallbackContent(parsedUrl, `This URL points to ${contentType}, so no web page body was extracted.`),
+          publishedAt: collectedAt,
+          collectedAt,
+        };
+
+        await Promise.all([ensureSeq(), ensureArticleWorkflow()]);
+        const { rows: [saved] } = await sql`
+          INSERT INTO articles (
+            id, url, title, author, content, published_at, collected_at,
+            source_type, extraction_status, extraction_method, extraction_error, extracted_at
+          )
+          VALUES (
+            ${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content},
+            ${article.publishedAt}, ${article.collectedAt}, ${sourceType(parsedUrl)},
+            'link_only', 'non_html', ${`Unsupported content type: ${contentType}`}, ${article.collectedAt}
+          )
+          ON CONFLICT (id) DO UPDATE SET
+            url = EXCLUDED.url,
+            title = EXCLUDED.title,
+            author = EXCLUDED.author,
+            content = EXCLUDED.content,
+            published_at = EXCLUDED.published_at,
+            source_type = EXCLUDED.source_type,
+            extraction_status = EXCLUDED.extraction_status,
+            extraction_method = EXCLUDED.extraction_method,
+            extraction_error = EXCLUDED.extraction_error,
+            extracted_at = EXCLUDED.extracted_at
+          RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
+        `;
+
+        return NextResponse.json({
+          shortLink: `/${id}`,
+          article,
+          collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
+          existed: Boolean(saved?.existed),
+          extractionStatus: 'link_only',
+        });
+      }
+
+      html = await response.text();
+      if (isDedaoUrl(parsedUrl) || isDedaoUrl(effectiveUrl)) {
+        specializedExtraction = extractDedaoArticle(html);
+      }
     }
-    const html = await response.text();
 
     // Parse HTML
     const $ = cheerio.load(html);
@@ -391,10 +401,12 @@ export async function POST(request: NextRequest) {
     const isWeChat = parsedUrl.hostname.endsWith('mp.weixin.qq.com');
     const headingTitle = firstText($, isWeChat ? ['#activity-name', 'h1'] : ['h1']);
     let title =
+      specializedExtraction?.title ||
       (isWeChat ? headingTitle || metadataTitle : metadataTitle || headingTitle) ||
       $('title').text().trim() ||
       fallbackTitle(parsedUrl);
     let author =
+      specializedExtraction?.author ||
       firstText($, ['#js_name', '#profileBt a', '.author', '.byline', '[rel="author"]']) ||
       firstAttr(
         $,
@@ -409,6 +421,7 @@ export async function POST(request: NextRequest) {
       ) ||
       parsedUrl.hostname.replace(/^www\./, '');
     let publishedAt =
+      specializedExtraction?.publishedAt ||
       firstAttr(
         $,
         [
@@ -425,14 +438,16 @@ export async function POST(request: NextRequest) {
       firstAttr($, ['time[datetime]'], 'datetime') ||
       firstText($, ['#publish_time', 'time']) ||
       new Date().toISOString();
-    const extractedContentHtml = getContentHtml($);
+    const extractedContentHtml = specializedExtraction ? '' : getContentHtml($);
     const validExtractedContent =
       extractedContentHtml && !isBlockedOrScriptLike(getReadableText(extractedContentHtml));
-    const weChatTextHtml = validExtractedContent ? '' : getWeChatTextPageHtml(html);
-    let contentHtml = validExtractedContent ? extractedContentHtml : weChatTextHtml || '';
-    let extractionMethod = validExtractedContent ? 'dom' : weChatTextHtml ? 'wechat_text' : 'none';
+    const weChatTextHtml = specializedExtraction || validExtractedContent ? '' : getWeChatTextPageHtml(html);
+    let contentHtml = specializedExtraction?.contentHtml || (validExtractedContent ? extractedContentHtml : weChatTextHtml || '');
+    let extractionMethod =
+      specializedExtraction?.extractionMethod ||
+      (validExtractedContent ? 'dom' : weChatTextHtml ? 'wechat_text' : 'none');
 
-    if (isXHost(parsedUrl.hostname)) {
+    if (isXUrl(parsedUrl) && !specializedExtraction) {
       const xMeta = extractXMeta($, parsedUrl, getReadableText(contentHtml));
       if (xMeta.author) author = xMeta.author;
       if (xMeta.title) title = xMeta.title;
@@ -464,19 +479,25 @@ export async function POST(request: NextRequest) {
     const usableMetadataDescription =
       normalizeWhitespace(metadataDescription).length >= 80 &&
       !isBlockedOrScriptLike(metadataDescription);
-    const extractionStatus = contentText.length >= 80 ? 'full' : usableMetadataDescription ? 'partial' : 'link_only';
+    const extractionStatus =
+      specializedExtraction?.extractionStatus ||
+      (contentText.length >= 80 ? 'full' : usableMetadataDescription ? 'partial' : 'link_only');
     if (contentText.length < 80 && usableMetadataDescription) extractionMethod = 'page_metadata';
     const extractionError =
-      extractionStatus === 'full'
+      specializedExtraction?.extractionError !== undefined
+        ? specializedExtraction.extractionError
+        : extractionStatus === 'full'
         ? null
         : extractionStatus === 'partial'
           ? 'Full body unavailable; saved page metadata summary.'
           : 'Readable content could not be extracted automatically.';
     const content =
       extractionStatus === 'full'
-        ? cleanContent(contentHtml, parsedUrl)
+        ? cleanContent(contentHtml, effectiveUrl)
         : extractionStatus === 'partial'
-          ? metadataExcerptContent(parsedUrl, normalizeWhitespace(metadataDescription))
+          ? specializedExtraction
+            ? cleanContent(contentHtml, effectiveUrl)
+            : metadataExcerptContent(parsedUrl, normalizeWhitespace(metadataDescription))
           : fallbackContent(parsedUrl, extractionError);
 
     // Generate short ID

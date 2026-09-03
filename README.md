@@ -26,3 +26,16 @@ session. Public article pages and short links do not expose these fields.
 The Research filter exposes a Markdown export at `/api/research/export`. It contains the
 selected articles, personal notes, research questions, and extracted text for handing off
 to an agent.
+
+## Source extraction
+
+- WeChat articles use the page DOM and the platform's text-page fallback.
+- Public X posts use the read-only FxTwitter JSON endpoint because X commonly blocks
+  server-side page requests. Set `X_EXTRACTOR_BASE_URL` to a compatible endpoint if the
+  provider needs to be replaced; the original X URL remains the canonical stored URL.
+- Dedao share links follow their redirect and parse the JSON embedded in the public
+  trial-reading page. These records are marked `partial` because the public page may only
+  contain a trial excerpt.
+
+Source-specific extractors live in `lib/extractors/`. If a specialized extractor fails,
+the route falls back to the generic metadata and DOM extraction path.
