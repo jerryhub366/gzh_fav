@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { getAdminSession } from '../../lib/adminClient';
 
 const PAGE_SIZE = 20;
 
@@ -15,11 +16,13 @@ export default function NotesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
 
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasMore = notes.length < total;
 
   const fetchNotes = useCallback(async (offset: number) => {
+    if (!authorized) return;
     const isFirstPage = offset === 0;
     if (isFirstPage) setLoading(true);
     else setLoadingMore(true);
@@ -36,11 +39,21 @@ export default function NotesPage() {
       if (isFirstPage) setLoading(false);
       else setLoadingMore(false);
     }
+  }, [authorized]);
+
+  useEffect(() => {
+    let active = true;
+    getAdminSession().then((session) => {
+      if (active) setAuthorized(session.admin);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
-    fetchNotes(0);
-  }, [fetchNotes]);
+    if (authorized) fetchNotes(0);
+  }, [authorized, fetchNotes]);
 
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -58,6 +71,19 @@ export default function NotesPage() {
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [hasMore, loadingMore, notes.length, fetchNotes]);
+
+  if (authorized === null) {
+    return <main className="max-w-4xl mx-auto p-6 text-gray-500">Loading...</main>;
+  }
+
+  if (!authorized) {
+    return (
+      <main className="max-w-4xl mx-auto p-6">
+        <a href="/articles" className="text-sm text-gray-500 hover:text-gray-700">← Articles</a>
+        <p className="mt-6 text-amber-700">Admin access required.</p>
+      </main>
+    );
+  }
 
   return (
     <main className="max-w-4xl mx-auto p-6">

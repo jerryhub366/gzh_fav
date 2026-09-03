@@ -2,6 +2,8 @@ import { notFound } from 'next/navigation';
 import { sql } from '@vercel/postgres';
 import { proxyArticleImages } from '../../lib/html';
 import AdminEditLink from './AdminEditLink';
+import ArticleWorkflowPanel from './ArticleWorkflowPanel';
+import { displayArticleTitle } from '../../lib/articleWorkflow';
 
 interface Article {
   id: string;
@@ -36,9 +38,15 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
   return (
     <div className="max-w-4xl mx-auto p-6">
       <AdminEditLink id={article.id} />
-      <h1 className="text-3xl font-bold mb-4">{article.title}</h1>
+      <h1 className="text-3xl font-bold mb-4">{displayArticleTitle(article.title)}</h1>
       <p className="text-gray-600 mb-2">Author: {article.author}</p>
-      <p className="text-gray-600 mb-4">Published: {new Date(article.published_at).toLocaleDateString()}</p>
+      <div className="mb-6 flex flex-wrap gap-x-4 gap-y-2 text-gray-600">
+        <span>Published: {new Date(article.published_at).toLocaleDateString()}</span>
+        <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+          Original source ↗
+        </a>
+      </div>
+      <ArticleWorkflowPanel id={article.id} />
       {hasContent ? (
         <div className="article-content" dangerouslySetInnerHTML={{ __html: proxyArticleImages(article.content) }} />
       ) : (

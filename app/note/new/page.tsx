@@ -1,13 +1,23 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import { getAdminSession } from '../../../lib/adminClient';
 
 export default function NewNote() {
   const [content, setContent] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const router = useRouter();
+  const [authorized, setAuthorized] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getAdminSession().then((session) => {
+      if (active) setAuthorized(session.admin);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleSave = async () => {
     if (!content.trim()) return;
@@ -22,7 +32,7 @@ export default function NewNote() {
       });
       const data = await res.json();
       if (res.ok) {
-        window.location.href = '/?tab=notes';
+        window.location.href = '/notes';
       } else {
         setError(data.error || 'Failed to save');
       }
@@ -33,11 +43,24 @@ export default function NewNote() {
     }
   };
 
+  if (authorized === null) {
+    return <main className="max-w-4xl mx-auto p-6 text-gray-500">Loading...</main>;
+  }
+
+  if (!authorized) {
+    return (
+      <main className="max-w-4xl mx-auto p-6">
+        <a href="/articles" className="text-sm text-gray-500 hover:text-gray-700">← Articles</a>
+        <p className="mt-6 text-amber-700">Admin access required.</p>
+      </main>
+    );
+  }
+
   return (
     <main className="max-w-4xl mx-auto p-6">
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
-          <a href="/?tab=notes" className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm">
+          <a href="/notes" className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-sm">
             ← Back
           </a>
           <h1 className="text-2xl font-bold">New Note</h1>
