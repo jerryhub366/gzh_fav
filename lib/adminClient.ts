@@ -1,4 +1,5 @@
-export const ADMIN_STORAGE_KEY = 'gzh_fav_admin';
+export const ADMIN_STORAGE_KEY = 'gzh_fav_admin:v1';
+const LEGACY_ADMIN_STORAGE_KEY = 'gzh_fav_admin';
 const ADMIN_TOKEN_HEADER = 'X-Admin-Token';
 
 interface AdminSession {
@@ -22,27 +23,33 @@ function tokenFromHash() {
 
 export async function getAdminSession(): Promise<AdminSession> {
   const hashToken = tokenFromHash();
-  const storedToken = window.localStorage.getItem(ADMIN_STORAGE_KEY) || '';
+  let storedToken = '';
+  try {
+    storedToken =
+      window.localStorage.getItem(ADMIN_STORAGE_KEY) ||
+      window.localStorage.getItem(LEGACY_ADMIN_STORAGE_KEY) ||
+      '';
+  } catch {}
   const token = hashToken || storedToken;
 
   try {
     const response = await fetch('/api/session', {
+      method: token ? 'POST' : 'GET',
       headers: token ? { [ADMIN_TOKEN_HEADER]: token } : undefined,
       cache: 'no-store',
     });
     const session = await response.json();
     const admin = response.ok && session.admin === true;
 
-    if (admin) {
-      window.localStorage.setItem(ADMIN_STORAGE_KEY, token);
-    } else if (token) {
+    try {
       window.localStorage.removeItem(ADMIN_STORAGE_KEY);
-    }
+      window.localStorage.removeItem(LEGACY_ADMIN_STORAGE_KEY);
+    } catch {}
 
     return {
       admin,
       authEnabled: session.authEnabled === true,
-      token: admin ? token : '',
+      token: '',
     };
   } catch {
     return { admin: false, authEnabled: true, token: '' };
@@ -50,5 +57,5 @@ export async function getAdminSession(): Promise<AdminSession> {
 }
 
 export function adminHeaders(token: string) {
-  return { [ADMIN_TOKEN_HEADER]: token };
+  return token ? { [ADMIN_TOKEN_HEADER]: token } : {};
 }

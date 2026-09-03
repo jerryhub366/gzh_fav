@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { createHash } from 'crypto';
 import ensureNotes from '../../../lib/db/ensureNotes';
+import { isAdminRequest } from '../../../lib/admin';
+
+function forbidden() {
+  return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+}
 
 export async function GET(request: NextRequest) {
+  if (!isAdminRequest(request)) return forbidden();
+
   try {
     await ensureNotes();
 
@@ -31,6 +38,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isAdminRequest(request)) return forbidden();
+
   try {
     await ensureNotes();
 
