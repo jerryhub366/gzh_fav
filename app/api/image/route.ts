@@ -16,7 +16,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
   }
 
-  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.endsWith('qpic.cn')) {
+  const isQpicHost = url.hostname === 'qpic.cn' || url.hostname.endsWith('.qpic.cn');
+  if (!['http:', 'https:'].includes(url.protocol) || !isQpicHost) {
     return NextResponse.json({ error: 'Unsupported image host' }, { status: 400 });
   }
 

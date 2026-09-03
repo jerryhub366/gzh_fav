@@ -3,7 +3,9 @@ import * as cheerio from 'cheerio';
 import { sql } from '@vercel/postgres';
 import { createHash } from 'crypto';
 import ensureSeq from '../../../lib/db/ensureSeq';
+import ensureArticleWorkflow from '../../../lib/db/ensureArticleWorkflow';
 import { sanitizeArticleHtml } from '../../../lib/html';
+import { isAdminRequest } from '../../../lib/admin';
 
 interface Article {
   id: string;
@@ -38,6 +40,19 @@ function normalizeWhitespace(value: string) {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeTitle(value: string) {
+  return normalizeWhitespace(value.replace(/\\[nrt]/g, ' '));
+}
+
+function titleFromContent(value: string, maxLength = 72) {
+  const text = normalizeTitle(value);
+  if (!text) return '';
+
+  const sentenceEnd = text.search(/[。！？!?]/);
+  const candidate = sentenceEnd >= 11 ? text.slice(0, sentenceEnd + 1) : text;
+  return candidate.length > maxLength ? `${candidate.slice(0, maxLength).trimEnd()}…` : candidate;
+}
+
 function fallbackTitle(url: URL) {
   const lastSegment = decodeURIComponent(url.pathname.split('/').filter(Boolean).pop() || '');
   return lastSegment || url.hostname;
@@ -55,6 +70,14 @@ function escapeHtml(value: string) {
 function fallbackContent(url: URL, reason: string) {
   return `
     <p>${escapeHtml(reason)}</p>
+    <p><a href="${escapeHtml(url.toString())}" target="_blank" rel="noopener noreferrer">Open original link</a></p>
+  `.trim();
+}
+
+function metadataExcerptContent(url: URL, description: string) {
+  return `
+    <p><strong>Only the page summary was available; the full body was not extracted.</strong></p>
+    <p>${escapeHtml(description)}</p>
     <p><a href="${escapeHtml(url.toString())}" target="_blank" rel="noopener noreferrer">Open original link</a></p>
   `.trim();
 }
@@ -123,6 +146,12 @@ function isXHost(hostname: string) {
   return /(^|\.)(x\.com|twitter\.com)$/i.test(hostname);
 }
 
+function sourceType(url: URL) {
+  if (url.hostname.endsWith('mp.weixin.qq.com')) return 'wechat';
+  if (isXHost(url.hostname)) return 'x';
+  return 'web';
+}
+
 // Engagement chrome that X appends to the tweet body (counts + labels). These
 // labels don't occur alone in tweet prose, so removing standalone-label leaves
 // (and the bare number right before them) is safe.
@@ -184,7 +213,7 @@ function extractXMeta($: cheerio.CheerioAPI, parsedUrl: URL, contentText: string
     if (!isNaN(dt.getTime())) publishedAt = dt.toISOString();
   }
 
-  return { title, author, publishedAt };
+  return { title, author, publishedAt, body };
 }
 
 function isBlockedOrScriptLike(text: string) {
@@ -264,6 +293,10 @@ function getContentHtml($: cheerio.CheerioAPI) {
 }
 
 export async function POST(request: NextRequest) {
+  if (!isAdminRequest(request)) {
+    return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
+  }
+
   try {
     const { url } = await request.json();
 
@@ -276,6 +309,9 @@ export async function POST(request: NextRequest) {
       parsedUrl = new URL(url);
     } catch {
       return NextResponse.json({ error: 'Invalid URL' }, { status: 400 });
+    }
+    if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+      return NextResponse.json({ error: 'Only HTTP and HTTPS URLs are supported' }, { status: 400 });
     }
 
     // Fetch the article
@@ -304,16 +340,28 @@ export async function POST(request: NextRequest) {
         collectedAt,
       };
 
-      await ensureSeq();
+      await Promise.all([ensureSeq(), ensureArticleWorkflow()]);
       const { rows: [saved] } = await sql`
-        INSERT INTO articles (id, url, title, author, content, published_at, collected_at)
-        VALUES (${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content}, ${article.publishedAt}, ${article.collectedAt})
+        INSERT INTO articles (
+          id, url, title, author, content, published_at, collected_at,
+          source_type, extraction_status, extraction_method, extraction_error, extracted_at
+        )
+        VALUES (
+          ${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content},
+          ${article.publishedAt}, ${article.collectedAt}, ${sourceType(parsedUrl)},
+          'link_only', 'non_html', ${`Unsupported content type: ${contentType}`}, ${article.collectedAt}
+        )
         ON CONFLICT (id) DO UPDATE SET
           url = EXCLUDED.url,
           title = EXCLUDED.title,
           author = EXCLUDED.author,
           content = EXCLUDED.content,
-          published_at = EXCLUDED.published_at
+          published_at = EXCLUDED.published_at,
+          source_type = EXCLUDED.source_type,
+          extraction_status = EXCLUDED.extraction_status,
+          extraction_method = EXCLUDED.extraction_method,
+          extraction_error = EXCLUDED.extraction_error,
+          extracted_at = EXCLUDED.extracted_at
         RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
       `;
 
@@ -322,6 +370,7 @@ export async function POST(request: NextRequest) {
         article,
         collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
         existed: Boolean(saved?.existed),
+        extractionStatus: 'link_only',
       });
     }
     const html = await response.text();
@@ -329,13 +378,20 @@ export async function POST(request: NextRequest) {
     // Parse HTML
     const $ = cheerio.load(html);
 
+    const metadataTitle = firstAttr(
+      $,
+      ['meta[property="og:title"]', 'meta[name="twitter:title"]', 'meta[name="title"]'],
+      'content',
+    );
+    const metadataDescription = firstAttr(
+      $,
+      ['meta[property="og:description"]', 'meta[name="twitter:description"]', 'meta[name="description"]'],
+      'content',
+    );
+    const isWeChat = parsedUrl.hostname.endsWith('mp.weixin.qq.com');
+    const headingTitle = firstText($, isWeChat ? ['#activity-name', 'h1'] : ['h1']);
     let title =
-      firstText($, ['#activity-name', 'h1']) ||
-      firstAttr(
-        $,
-        ['meta[property="og:title"]', 'meta[name="twitter:title"]', 'meta[name="title"]'],
-        'content',
-      ) ||
+      (isWeChat ? headingTitle || metadataTitle : metadataTitle || headingTitle) ||
       $('title').text().trim() ||
       fallbackTitle(parsedUrl);
     let author =
@@ -370,10 +426,11 @@ export async function POST(request: NextRequest) {
       firstText($, ['#publish_time', 'time']) ||
       new Date().toISOString();
     const extractedContentHtml = getContentHtml($);
-    let contentHtml =
-      extractedContentHtml && !isBlockedOrScriptLike(getReadableText(extractedContentHtml))
-        ? extractedContentHtml
-        : getWeChatTextPageHtml(html) || '';
+    const validExtractedContent =
+      extractedContentHtml && !isBlockedOrScriptLike(getReadableText(extractedContentHtml));
+    const weChatTextHtml = validExtractedContent ? '' : getWeChatTextPageHtml(html);
+    let contentHtml = validExtractedContent ? extractedContentHtml : weChatTextHtml || '';
+    let extractionMethod = validExtractedContent ? 'dom' : weChatTextHtml ? 'wechat_text' : 'none';
 
     if (isXHost(parsedUrl.hostname)) {
       const xMeta = extractXMeta($, parsedUrl, getReadableText(contentHtml));
@@ -381,13 +438,46 @@ export async function POST(request: NextRequest) {
       if (xMeta.title) title = xMeta.title;
       if (xMeta.publishedAt) publishedAt = xMeta.publishedAt;
       contentHtml = stripXChrome(contentHtml);
+      if (getReadableText(contentHtml).length < 80 && xMeta.body) {
+        contentHtml = textToHtml(xMeta.body);
+        extractionMethod = 'x_metadata';
+      }
+    }
+
+    const contentText = getReadableText(contentHtml);
+    const normalizedTitle = normalizeTitle(title);
+    const normalizedMetadataTitle = normalizeTitle(metadataTitle);
+    const titleLooksLikeBody =
+      normalizedTitle.length > 120 ||
+      (normalizedTitle.length >= 80 && contentText.startsWith(normalizedTitle.slice(0, 60)));
+
+    if (titleLooksLikeBody) {
+      title =
+        (normalizedMetadataTitle && normalizedMetadataTitle.length <= 120
+          ? normalizedMetadataTitle
+          : titleFromContent(contentText || normalizedTitle)) || fallbackTitle(parsedUrl);
+    } else {
+      title = normalizedTitle || fallbackTitle(parsedUrl);
     }
 
     // Clean content
+    const usableMetadataDescription =
+      normalizeWhitespace(metadataDescription).length >= 80 &&
+      !isBlockedOrScriptLike(metadataDescription);
+    const extractionStatus = contentText.length >= 80 ? 'full' : usableMetadataDescription ? 'partial' : 'link_only';
+    if (contentText.length < 80 && usableMetadataDescription) extractionMethod = 'page_metadata';
+    const extractionError =
+      extractionStatus === 'full'
+        ? null
+        : extractionStatus === 'partial'
+          ? 'Full body unavailable; saved page metadata summary.'
+          : 'Readable content could not be extracted automatically.';
     const content =
-      getReadableText(contentHtml).length >= 80
+      extractionStatus === 'full'
         ? cleanContent(contentHtml, parsedUrl)
-        : fallbackContent(parsedUrl, 'Readable content could not be extracted automatically.');
+        : extractionStatus === 'partial'
+          ? metadataExcerptContent(parsedUrl, normalizeWhitespace(metadataDescription))
+          : fallbackContent(parsedUrl, extractionError);
 
     // Generate short ID
     const id = createHash('md5').update(parsedUrl.toString()).digest('hex').substring(0, 6);
@@ -404,17 +494,29 @@ export async function POST(request: NextRequest) {
 
     // Save to database
     // Ensure seq exists and is ready
-    await ensureSeq();
+    await Promise.all([ensureSeq(), ensureArticleWorkflow()]);
 
     const { rows: [saved] } = await sql`
-      INSERT INTO articles (id, url, title, author, content, published_at, collected_at)
-      VALUES (${id}, ${article.url}, ${title}, ${author}, ${content}, ${publishedAt}, ${article.collectedAt})
+      INSERT INTO articles (
+        id, url, title, author, content, published_at, collected_at,
+        source_type, extraction_status, extraction_method, extraction_error, extracted_at
+      )
+      VALUES (
+        ${id}, ${article.url}, ${title}, ${author}, ${content}, ${publishedAt},
+        ${article.collectedAt}, ${sourceType(parsedUrl)}, ${extractionStatus},
+        ${extractionMethod}, ${extractionError}, ${article.collectedAt}
+      )
       ON CONFLICT (id) DO UPDATE SET
         url = EXCLUDED.url,
         title = EXCLUDED.title,
         author = EXCLUDED.author,
         content = EXCLUDED.content,
-        published_at = EXCLUDED.published_at
+        published_at = EXCLUDED.published_at,
+        source_type = EXCLUDED.source_type,
+        extraction_status = EXCLUDED.extraction_status,
+        extraction_method = EXCLUDED.extraction_method,
+        extraction_error = EXCLUDED.extraction_error,
+        extracted_at = EXCLUDED.extracted_at
       RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
     `;
 
@@ -423,6 +525,7 @@ export async function POST(request: NextRequest) {
       article,
       collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
       existed: Boolean(saved?.existed),
+      extractionStatus,
     });
   } catch (error) {
     console.error('Error fetching article:', error);

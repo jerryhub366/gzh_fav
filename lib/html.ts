@@ -4,7 +4,7 @@ function proxiedImageSrc(src: string) {
   try {
     const url = new URL(src, 'http://localhost');
     if (url.pathname === '/api/image') return `${url.pathname}${url.search}`;
-    if (url.hostname.endsWith('qpic.cn')) {
+    if (url.hostname === 'qpic.cn' || url.hostname.endsWith('.qpic.cn')) {
       return `/api/image?url=${encodeURIComponent(url.toString())}`;
     }
   } catch {
