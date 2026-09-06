@@ -11,6 +11,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Token',
 };
 
+export const preferredRegion = ['sin1'];
+
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders });
 }

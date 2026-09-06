@@ -8,6 +8,8 @@ import {
   isAdminToken,
 } from '../../../lib/admin';
 
+export const preferredRegion = ['sin1'];
+
 export async function GET(request: NextRequest) {
   return NextResponse.json(
     {

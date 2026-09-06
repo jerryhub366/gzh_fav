@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidateTag } from 'next/cache';
 import * as cheerio from 'cheerio';
 import { sql } from '@vercel/postgres';
 import { createHash } from 'crypto';
@@ -291,6 +292,8 @@ function getContentHtml($: cheerio.CheerioAPI) {
   return bestHtml;
 }
 
+export const preferredRegion = ['sin1'];
+
 export async function POST(request: NextRequest) {
   if (!isAdminRequest(request)) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
@@ -369,6 +372,8 @@ export async function POST(request: NextRequest) {
             extracted_at = EXCLUDED.extracted_at
           RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
         `;
+
+        revalidateTag('article-detail', { expire: 60 });
 
         return NextResponse.json({
           shortLink: `/${id}`,
@@ -540,6 +545,8 @@ export async function POST(request: NextRequest) {
         extracted_at = EXCLUDED.extracted_at
       RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
     `;
+
+    revalidateTag('article-detail', { expire: 60 });
 
     return NextResponse.json({
       shortLink: `/${id}`,

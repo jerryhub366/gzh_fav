@@ -7,7 +7,7 @@ import {
   displayArticleTitle,
   type ArticleStatus,
 } from '../../lib/articleWorkflow';
-import { adminHeaders, getAdminSession } from '../../lib/adminClient';
+import { getAdminSession } from '../../lib/adminClient';
 
 const PAGE_SIZE = 20;
 
@@ -226,7 +226,6 @@ export default function ArticlesPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('inbox');
   const [searchDraft, setSearchDraft] = useState('');
   const [query, setQuery] = useState('');
-  const [adminToken, setAdminToken] = useState('');
   const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [authEnabled, setAuthEnabled] = useState(true);
   const [collecting, setCollecting] = useState(false);
@@ -243,7 +242,6 @@ export default function ArticlesPage() {
       if (!active) return;
       setAuthorized(session.admin);
       setAuthEnabled(session.authEnabled);
-      setAdminToken(session.token);
       if (!session.admin) setStatusFilter('all');
     });
     return () => {
@@ -253,17 +251,15 @@ export default function ArticlesPage() {
 
   const fetchArticles = useCallback(
     async (offset: number) => {
-      if (authorized === null) return;
       const isFirstPage = offset === 0;
       if (isFirstPage) setLoading(true);
       else setLoadingMore(true);
 
       try {
         const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
-        if (authorized && statusFilter !== 'all') params.set('status', statusFilter);
-        if (authorized && query) params.set('q', query);
+        if (authorized !== false && statusFilter !== 'all') params.set('status', statusFilter);
+        if (authorized !== false && query) params.set('q', query);
         const response = await fetch(`/api/articles?${params}`, {
-          headers: adminHeaders(adminToken),
           cache: 'no-store',
         });
         const data = await response.json();
@@ -279,11 +275,11 @@ export default function ArticlesPage() {
         else setLoadingMore(false);
       }
     },
-    [adminToken, authorized, query, statusFilter],
+    [authorized, query, statusFilter],
   );
 
   useEffect(() => {
-    setArticles([]);
+    setArticles((previous) => (previous.length ? previous : []));
     fetchArticles(0);
   }, [fetchArticles]);
 
@@ -313,7 +309,7 @@ export default function ArticlesPage() {
     try {
       const response = await fetch('/api/fetch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...adminHeaders(adminToken) },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       });
       const data = await response.json();
