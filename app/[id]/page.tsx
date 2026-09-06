@@ -6,8 +6,6 @@ import AdminEditLink from './AdminEditLink';
 import ArticleWorkflowPanel from './ArticleWorkflowPanel';
 import { displayArticleTitle } from '../../lib/articleWorkflow';
 
-export const preferredRegion = ['sin1'];
-
 interface Article {
   id: string;
   url: string;

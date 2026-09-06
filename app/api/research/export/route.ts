@@ -10,8 +10,6 @@ function htmlToText(html: string) {
   return $('body').text().replace(/\s+/g, ' ').trim();
 }
 
-export const preferredRegion = ['sin1'];
-
 export async function GET(request: NextRequest) {
   if (!isAdminRequest(request)) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });

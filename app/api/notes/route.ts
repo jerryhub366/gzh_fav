@@ -8,8 +8,6 @@ function forbidden() {
   return NextResponse.json({ error: 'Admin access required' }, { status: 403 });
 }
 
-export const preferredRegion = ['sin1'];
-
 export async function GET(request: NextRequest) {
   if (!isAdminRequest(request)) return forbidden();
 

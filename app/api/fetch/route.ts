@@ -292,8 +292,6 @@ function getContentHtml($: cheerio.CheerioAPI) {
   return bestHtml;
 }
 
-export const preferredRegion = ['sin1'];
-
 export async function POST(request: NextRequest) {
   if (!isAdminRequest(request)) {
     return NextResponse.json({ error: 'Admin access required' }, { status: 403 });

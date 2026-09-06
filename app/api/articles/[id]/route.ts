@@ -4,8 +4,6 @@ import { sql } from '@vercel/postgres';
 import { proxyArticleImages, sanitizeArticleHtml } from '../../../../lib/html';
 import { isAdminRequest } from '../../../../lib/admin';
 
-export const preferredRegion = ['sin1'];
-
 export async function GET(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;

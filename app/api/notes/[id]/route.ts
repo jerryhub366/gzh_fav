@@ -3,8 +3,6 @@ import { sql } from '@vercel/postgres';
 import { isAdminRequest } from '../../../../lib/admin';
 import ensureNotes from '../../../../lib/db/ensureNotes';
 
-export const preferredRegion = ['sin1'];
-
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
