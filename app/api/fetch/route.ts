@@ -20,8 +20,52 @@ interface Article {
   collectedAt: string;
 }
 
+// Allow the retry loop (fetch + backoff) to stay under Vercel's function limit.
+export const maxDuration = 60;
+
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
+
+// UA rotation used when a fetch returns an anti-bot / verification page.
+// WeChat serves such pages to datacenter (cloud) IPs for risk-flagged URLs;
+// a different client fingerprint sometimes slips through a temporary block.
+const USER_AGENTS = [
+  USER_AGENT,
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.49(0x18003121) NetType/WIFI Language/zh_CN',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/605.1.15',
+];
+
+// Backoff (ms) before each retry, index aligned with fetchAttempts - 1.
+const RETRY_BACKOFF_MS = [1500, 4000];
+
+const FETCH_TIMEOUT_MS = 15_000;
+
+// Phrases that identify anti-bot verification pages served to datacenter IPs.
+// Most specific first.
+const BLOCKED_PAGE_PHRASES = [
+  '完成验证后即可继续访问',
+  '当前环境异常',
+  '访问过于频繁',
+  '环境异常，请完成验证',
+  'enable javascript',
+  'please enable cookies',
+  'access denied',
+];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function detectBlockedPage(rawHtml: string) {
+  // A real article page carries its body either inline in #js_content or in the
+  // content_noencode blob; verification pages have neither.
+  if (rawHtml.includes('content_noencode') || /id="js_content"[^>]*>\s*\S/.test(rawHtml)) return '';
+  const text = getReadableText(rawHtml).toLowerCase();
+  for (const phrase of BLOCKED_PAGE_PHRASES) {
+    if (text.includes(phrase.toLowerCase())) return phrase;
+  }
+  return '';
+}
 
 function firstText($: cheerio.CheerioAPI, selectors: string[]) {
   for (const selector of selectors) {
@@ -317,72 +361,93 @@ export async function POST(request: NextRequest) {
     let specializedExtraction = isXUrl(parsedUrl) ? await fetchXArticle(parsedUrl) : null;
     let html = '';
     let effectiveUrl = parsedUrl;
+    let blockedPhrase = '';
+    let fetchAttempts = 0;
 
     if (!specializedExtraction) {
-      const response = await fetch(parsedUrl.toString(), {
-        headers: {
-          Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-          Referer: parsedUrl.hostname.endsWith('mp.weixin.qq.com') ? 'https://mp.weixin.qq.com/' : parsedUrl.origin,
-          'User-Agent': USER_AGENT,
-        },
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!response.ok) {
-        return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
+      for (const userAgent of USER_AGENTS) {
+        fetchAttempts += 1;
+        let response: Response;
+        try {
+          response = await fetch(parsedUrl.toString(), {
+            headers: {
+              Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+              'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+              Referer: parsedUrl.hostname.endsWith('mp.weixin.qq.com') ? 'https://mp.weixin.qq.com/' : parsedUrl.origin,
+              'User-Agent': userAgent,
+            },
+            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+          });
+        } catch (error) {
+          // Transient network failure: retry with the next UA; only give up
+          // after the last attempt.
+          if (fetchAttempts < USER_AGENTS.length) {
+            await sleep(RETRY_BACKOFF_MS[fetchAttempts - 1]);
+            continue;
+          }
+          throw error;
+        }
+        if (!response.ok) {
+          return NextResponse.json({ error: 'Failed to fetch article' }, { status: 500 });
+        }
+        effectiveUrl = new URL(response.url || parsedUrl.toString());
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
+          const id = createHash('md5').update(parsedUrl.toString()).digest('hex').substring(0, 6);
+          const collectedAt = new Date().toISOString();
+          const article: Article = {
+            id,
+            url: parsedUrl.toString(),
+            title: fallbackTitle(parsedUrl),
+            author: parsedUrl.hostname.replace(/^www\./, ''),
+            content: fallbackContent(parsedUrl, `This URL points to ${contentType}, so no web page body was extracted.`),
+            publishedAt: collectedAt,
+            collectedAt,
+          };
+
+          await Promise.all([ensureSeq(), ensureArticleWorkflow()]);
+          const { rows: [saved] } = await sql`
+            INSERT INTO articles (
+              id, url, title, author, content, published_at, collected_at,
+              source_type, extraction_status, extraction_method, extraction_error, extracted_at
+            )
+            VALUES (
+              ${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content},
+              ${article.publishedAt}, ${article.collectedAt}, ${sourceType(parsedUrl)},
+              'link_only', 'non_html', ${`Unsupported content type: ${contentType}`}, ${article.collectedAt}
+            )
+            ON CONFLICT (id) DO UPDATE SET
+              url = EXCLUDED.url,
+              title = EXCLUDED.title,
+              author = EXCLUDED.author,
+              content = EXCLUDED.content,
+              published_at = EXCLUDED.published_at,
+              source_type = EXCLUDED.source_type,
+              extraction_status = EXCLUDED.extraction_status,
+              extraction_method = EXCLUDED.extraction_method,
+              extraction_error = EXCLUDED.extraction_error,
+              extracted_at = EXCLUDED.extracted_at
+            RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
+          `;
+
+          revalidateTag('article-detail', { expire: 60 });
+
+          return NextResponse.json({
+            shortLink: `/${id}`,
+            article,
+            collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
+            existed: Boolean(saved?.existed),
+            extractionStatus: 'link_only',
+          });
+        }
+
+        html = await response.text();
+        blockedPhrase = detectBlockedPage(html);
+        if (!blockedPhrase) break;
+        if (fetchAttempts < USER_AGENTS.length) {
+          await sleep(RETRY_BACKOFF_MS[fetchAttempts - 1]);
+        }
       }
-      effectiveUrl = new URL(response.url || parsedUrl.toString());
-      const contentType = response.headers.get('content-type') || '';
-      if (contentType && !contentType.includes('text/html') && !contentType.includes('application/xhtml+xml')) {
-        const id = createHash('md5').update(parsedUrl.toString()).digest('hex').substring(0, 6);
-        const collectedAt = new Date().toISOString();
-        const article: Article = {
-          id,
-          url: parsedUrl.toString(),
-          title: fallbackTitle(parsedUrl),
-          author: parsedUrl.hostname.replace(/^www\./, ''),
-          content: fallbackContent(parsedUrl, `This URL points to ${contentType}, so no web page body was extracted.`),
-          publishedAt: collectedAt,
-          collectedAt,
-        };
-
-        await Promise.all([ensureSeq(), ensureArticleWorkflow()]);
-        const { rows: [saved] } = await sql`
-          INSERT INTO articles (
-            id, url, title, author, content, published_at, collected_at,
-            source_type, extraction_status, extraction_method, extraction_error, extracted_at
-          )
-          VALUES (
-            ${id}, ${article.url}, ${article.title}, ${article.author}, ${article.content},
-            ${article.publishedAt}, ${article.collectedAt}, ${sourceType(parsedUrl)},
-            'link_only', 'non_html', ${`Unsupported content type: ${contentType}`}, ${article.collectedAt}
-          )
-          ON CONFLICT (id) DO UPDATE SET
-            url = EXCLUDED.url,
-            title = EXCLUDED.title,
-            author = EXCLUDED.author,
-            content = EXCLUDED.content,
-            published_at = EXCLUDED.published_at,
-            source_type = EXCLUDED.source_type,
-            extraction_status = EXCLUDED.extraction_status,
-            extraction_method = EXCLUDED.extraction_method,
-            extraction_error = EXCLUDED.extraction_error,
-            extracted_at = EXCLUDED.extracted_at
-          RETURNING collected_at, (xmax::text::bigint <> 0) AS existed
-        `;
-
-        revalidateTag('article-detail', { expire: 60 });
-
-        return NextResponse.json({
-          shortLink: `/${id}`,
-          article,
-          collectedAt: saved?.collected_at ? new Date(saved.collected_at).toISOString() : article.collectedAt,
-          existed: Boolean(saved?.existed),
-          extractionStatus: 'link_only',
-        });
-      }
-
-      html = await response.text();
       if (isDedaoUrl(parsedUrl) || isDedaoUrl(effectiveUrl)) {
         specializedExtraction = extractDedaoArticle(html);
       }
@@ -486,14 +551,18 @@ export async function POST(request: NextRequest) {
       specializedExtraction?.extractionStatus ||
       (contentText.length >= 80 ? 'full' : usableMetadataDescription ? 'partial' : 'link_only');
     if (contentText.length < 80 && usableMetadataDescription) extractionMethod = 'page_metadata';
+    const blockedError = blockedPhrase
+      ? `Blocked by an anti-bot verification page ("${blockedPhrase}"). Retried ${fetchAttempts}× with different user agents; the source site restricts server/cloud IPs for this URL.`
+      : '';
     const extractionError =
       specializedExtraction?.extractionError !== undefined
         ? specializedExtraction.extractionError
         : extractionStatus === 'full'
         ? null
-        : extractionStatus === 'partial'
-          ? 'Full body unavailable; saved page metadata summary.'
-          : 'Readable content could not be extracted automatically.';
+        : blockedError ||
+          (extractionStatus === 'partial'
+            ? 'Full body unavailable; saved page metadata summary.'
+            : 'Readable content could not be extracted automatically.');
     const content =
       extractionStatus === 'full'
         ? cleanContent(contentHtml, effectiveUrl)

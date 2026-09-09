@@ -61,7 +61,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ id: st
           Original source ↗
         </a>
       </div>
-      <ArticleWorkflowPanel id={article.id} />
+      <ArticleWorkflowPanel id={article.id} url={article.url} />
       {hasContent ? (
         <div className="article-content" dangerouslySetInnerHTML={{ __html: article.contentHtml }} />
       ) : (

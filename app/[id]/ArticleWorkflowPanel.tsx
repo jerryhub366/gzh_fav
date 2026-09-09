@@ -18,13 +18,15 @@ interface Workflow {
   extractionError?: string;
 }
 
-export default function ArticleWorkflowPanel({ id }: { id: string }) {
+export default function ArticleWorkflowPanel({ id, url }: { id: string; url: string }) {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [personalNote, setPersonalNote] = useState('');
   const [researchQuestion, setResearchQuestion] = useState('');
   const [tags, setTags] = useState('');
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState('');
+  const [reExtracting, setReExtracting] = useState(false);
+  const [reExtractMessage, setReExtractMessage] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -71,6 +73,26 @@ export default function ArticleWorkflowPanel({ id }: { id: string }) {
       setMessage(error instanceof Error ? error.message : '保存失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const reExtract = async () => {
+    setReExtracting(true);
+    setReExtractMessage('');
+    try {
+      const response = await fetch('/api/fetch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      setReExtractMessage('提取成功，正在刷新…');
+      window.location.reload();
+    } catch (error) {
+      setReExtractMessage(error instanceof Error ? error.message : '重新提取失败');
+    } finally {
+      setReExtracting(false);
     }
   };
 
@@ -133,11 +155,23 @@ export default function ArticleWorkflowPanel({ id }: { id: string }) {
         </label>
       </div>
       {workflow.extractionError ? <p className="mt-3 text-xs text-amber-700 dark:text-amber-300">{workflow.extractionError}</p> : null}
-      <div className="mt-4 flex items-center justify-between gap-3">
-        <span className="text-sm text-gray-500">{message}</span>
-        <button type="button" disabled={saving} onClick={() => save()} className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
-          {saving ? '保存中…' : '保存'}
-        </button>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <span className="text-sm text-gray-500">{message || reExtractMessage}</span>
+        <div className="flex gap-2">
+          {workflow.extractionStatus !== 'full' ? (
+            <button
+              type="button"
+              disabled={reExtracting}
+              onClick={reExtract}
+              className="rounded-lg border border-purple-600 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-50 disabled:opacity-50 dark:text-purple-300 dark:hover:bg-purple-900"
+            >
+              {reExtracting ? '重新提取中…' : '重新提取'}
+            </button>
+          ) : null}
+          <button type="button" disabled={saving} onClick={() => save()} className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white hover:bg-purple-700 disabled:opacity-50">
+            {saving ? '保存中…' : '保存'}
+          </button>
+        </div>
       </div>
     </aside>
   );
