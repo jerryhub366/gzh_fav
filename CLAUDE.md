@@ -203,31 +203,8 @@ The app is deployed on Vercel. Pushing to the `main` branch triggers a productio
 
 ---
 
-## Invest Lab (`/lab`)
+---
 
-投资观点练习场。不做买卖建议。
+## Invest Lab / 研究工具：已迁出
 
-**2026-11-03 改版为对话式**（表单版实测没人走完：用户把整段想法写进“一句话观点”框后又被要求答三道题，直接放弃；三个挑战 + 四个收敛字段一次铺开是第二道墙）：一句话开局 → 陪练一次只问一个问题、问 3 次（澄清核心 → 换视角攻击 → 逼出证伪信号）→ 用用户原话整理成卡 → 点一个把握程度收卡 → 到期复盘。必填输入只剩：开局一句 + 3 句回答 + 1 次点击。没观点的日子用「今日一问」（`lib/lab/daily.ts`，按日期轮换）。
-- 新卡 `data.mode='chat'`，对话存 `data.turns`；旧表单卡走 `app/lab/[id]/LegacyCard.tsx` + `/challenge` 接口，只为兼容
-- 陪练逻辑 `lib/lab/coach.ts`（prompt 里的分阶段指令和“分清谁说了什么”规则是调过的，改之前先跑几个场景对比），模型调用统一走 `lib/lab/llm.ts` 的 `chatJSON`
-- 接口：`POST /api/lab/start`（`{text}` 或 `{daily:true,index}`）、`POST /api/lab/cards/[id]/turn`（`{reply}` 或 `{finish:true}`），每次模型调用记一次额度
-
-- 页面：`/lab`（首页：新建卡 + 连续交作品 + 校准）、`/lab/[id]`（单卡四步）、`/lab/principles`（公开原则页）、`/lab/s/[id]?k=<shareKey>`（朋友先押注再看答案，无需登录）
-- 代码：`lib/lab/principles.ts`（原则 P1–P20 + 题库，**改原则就加新版本**，旧卡指向旧版本）、`cards.ts`（单表 `lab_cards`，除筛选列外都放 `data` jsonb，懒迁移 `ensureLab()`）、`challenger.ts`（模型代理）、`markdown.ts`（导出到 vault 校准库）
-- **不走 admin 登录**（2026-11-03 用户要求当独立站点用）：每个浏览器首次访问由 `GET /api/lab/me` 发一个随机身份 cookie `invest_lab_owner`，卡片按 `owner_id` 隔离，别人的卡一律 404。换设备用首页底部的同步链接 `/lab#/sync/<身份>`；agent 用 `x-lab-owner` 头即可 `POST /api/lab/cards` 建卡（`lib/lab/owner.ts`）
-- 模型额度：`lab_usage` 表计数，每身份每天 80 次、全站每天 600 次（一张对话卡约 4 次）（`LAB_DAILY_CHALLENGES_PER_OWNER` / `LAB_DAILY_CHALLENGES_TOTAL`），超了退回规则题库
-- Blank-first 在服务端强制：三道题和初始概率没填完，`/challenge` 返回 400
-- 模型：`CLOUDALPHA_API_KEY`（兼容 `OPENAI_API_KEY`），`LAB_LLM_MODEL` 默认 gpt-5.5 → `LAB_LLM_FALLBACK_MODEL` gpt-5.4-mini → 规则题库兜底。中转实际返回的模型名会变（实测请求 gpt-5.5 返回 `gpt-6.1-sol`），卡片记录的是返回值
-- `review_date` 必须 `::text` 取出：pg 把 DATE 解析成本地零点，转 ISO 在东八区会每存一次倒退一天
-- 本地开发连的是生产 Neon 库，测试卡用完删掉
-
-### 研究工具（`/lab/tools`，2026-11-03）
-
-skill 的网页版：输入公司名 → 联网搜资料 → 按 skill 的方法写一份短报告。现有 5 个：现金故事、致命风险、反方备忘录、公司故事、买方报告（`lib/lab/tools/registry.ts`）。
-- **skill 是真源**：`npm run sync-skills` 把 `~/.claude/skills/<name>/SKILL.md` 同步成 `lib/lab/tools/skills.generated.ts`（去掉 frontmatter 和「保存/输出文件」段），改了 skill 要重跑并提交。网页版约束（篇幅、不提问、数据截止行、搜不到写「数据暂缺」）在 `lib/lab/tools/prompt.ts`，追加在 skill 原文后面并声明优先级更高。`prompt.ts` 只在服务端引用，skill 原文不进前端包
-- 联网：`lib/lab/llm.ts` 的 `researchMarkdown` 走中转的 **Responses API + `web_search` 工具**（chat/completions 不支持搜索）。必须传 `instructions`，否则中转套上它自己的 Codex 人设。实测一份报告 40–60 秒、搜索 3–4 次
-- 运行方式：`POST /api/lab/runs` 建一行 `lab_runs` 立刻返回，模型在 `after()` 里跑（`maxDuration=300`，项目开了 Fluid）；页面每 3 秒轮询 `GET /api/lab/runs/[id]`，手机锁屏不影响。超过 330 秒还在 running 视为失败
-- `lab_runs` 时间列是 TIMESTAMPTZ：不带时区的 TIMESTAMP 在本机会被当成东八区本地时间，差 8 小时（第一次就因此误判超时）
-- 额度单独计：`lab_usage.tool_runs`，每身份每天 15 次、全站 80 次（`LAB_DAILY_TOOL_RUNS_PER_OWNER` / `_TOTAL`）
-- 报告页「写观点卡」跳 `/lab?q=<公司>：` 预填；「接着看」跳 `/lab/tools/<slug>?company=` 只预填不自动跑
-- 加工具：`sync-skills.mjs` 的 SKILLS 加名字 → 跑同步 → `registry.ts` 加一条；P 站工作台 `portfolio/src/data/workflows.ts` 同步加一条（`skill` 字段写同源 skill）
+2026-11-03 拆到独立项目 **wb.ladebuid.com**（`~/Projects/workbench`，GitHub `jerryhub366/workbench`，Vercel 项目 `workbench`）。这里只剩 `next.config.js` 里把 `/lab*`、`/api/lab/*` 永久跳到 wb 的规则。两边仍共用同一个 Neon 库，`lab_` 开头的表归 workbench 管，fav 不要动它们。
