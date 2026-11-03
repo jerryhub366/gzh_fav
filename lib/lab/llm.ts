@@ -64,3 +64,47 @@ export async function chatJSON<T>(
   }
   throw new Error('模型暂不可用');
 }
+
+// 联网研究：走 Responses API + web_search 工具（中转支持，chat/completions 不支持搜索）。
+// 返回 Markdown 正文和模型引用过的链接；instructions 必须传，否则中转会套上它自己的默认人设。
+export async function researchMarkdown(
+  instructions: string,
+  input: string,
+  maxOutputTokens = 6000,
+  timeoutMs = 240000,
+): Promise<{ text: string; sources: { title: string; url: string }[]; modelId: string; searches: number }> {
+  if (!hasModelKey()) throw new Error('未配置模型密钥');
+  for (const model of MODELS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${BASE_URL}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${process.env.CLOUDALPHA_API_KEY || process.env.OPENAI_API_KEY}`,
+        },
+        body: JSON.stringify({ model, instructions, input, tools: [{ type: 'web_search' }], max_output_tokens: maxOutputTokens }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const output: any[] = json.output || [];
+      const parts = output.filter((o) => o.type === 'message').flatMap((o) => o.content || []);
+      const text = parts.map((c) => c.text || '').join('\n').trim();
+      if (text.length < 200) throw new Error('empty output');
+      const seen = new Set<string>();
+      const sources = parts
+        .flatMap((c) => c.annotations || [])
+        .filter((a) => a.url && !seen.has(a.url) && seen.add(a.url))
+        .map((a) => ({ title: String(a.title || a.url).slice(0, 120), url: String(a.url) }));
+      const searches = output.filter((o) => o.type === 'web_search_call').length;
+      return { text, sources, modelId: (json.model as string) || model, searches };
+    } catch (err: any) {
+      console.error(`lab research ${model} failed:`, err?.name === 'AbortError' ? 'timeout' : err?.message);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new Error('模型暂不可用');
+}

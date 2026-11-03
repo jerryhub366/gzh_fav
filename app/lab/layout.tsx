@@ -8,10 +8,11 @@ export const metadata: Metadata = {
 export default function LabLayout({ children }: { children: React.ReactNode }) {
   return (
     <div lang="zh-CN" className="min-h-screen">
-      <header className="max-w-3xl mx-auto px-4 sm:px-6 pt-6 flex items-center justify-between text-sm">
+      <header className="max-w-3xl mx-auto px-4 sm:px-6 pt-4 sm:pt-6 flex items-center justify-between text-sm">
         <a href="/lab" className="font-semibold text-gray-900 dark:text-white">Invest Lab</a>
         <nav className="flex gap-4 text-gray-500">
           <a href="/lab" className="hover:text-gray-800 dark:hover:text-gray-200">观点卡</a>
+          <a href="/lab/tools" className="hover:text-gray-800 dark:hover:text-gray-200">研究工具</a>
           <a href="/lab/principles" className="hover:text-gray-800 dark:hover:text-gray-200">原则</a>
         </nav>
       </header>

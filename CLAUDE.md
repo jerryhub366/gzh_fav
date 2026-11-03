@@ -220,3 +220,14 @@ The app is deployed on Vercel. Pushing to the `main` branch triggers a productio
 - 模型：`CLOUDALPHA_API_KEY`（兼容 `OPENAI_API_KEY`），`LAB_LLM_MODEL` 默认 gpt-5.5 → `LAB_LLM_FALLBACK_MODEL` gpt-5.4-mini → 规则题库兜底。中转实际返回的模型名会变（实测请求 gpt-5.5 返回 `gpt-6.1-sol`），卡片记录的是返回值
 - `review_date` 必须 `::text` 取出：pg 把 DATE 解析成本地零点，转 ISO 在东八区会每存一次倒退一天
 - 本地开发连的是生产 Neon 库，测试卡用完删掉
+
+### 研究工具（`/lab/tools`，2026-11-03）
+
+skill 的网页版：输入公司名 → 联网搜资料 → 按 skill 的方法写一份短报告。现有 5 个：现金故事、致命风险、反方备忘录、公司故事、买方报告（`lib/lab/tools/registry.ts`）。
+- **skill 是真源**：`npm run sync-skills` 把 `~/.claude/skills/<name>/SKILL.md` 同步成 `lib/lab/tools/skills.generated.ts`（去掉 frontmatter 和「保存/输出文件」段），改了 skill 要重跑并提交。网页版约束（篇幅、不提问、数据截止行、搜不到写「数据暂缺」）在 `lib/lab/tools/prompt.ts`，追加在 skill 原文后面并声明优先级更高。`prompt.ts` 只在服务端引用，skill 原文不进前端包
+- 联网：`lib/lab/llm.ts` 的 `researchMarkdown` 走中转的 **Responses API + `web_search` 工具**（chat/completions 不支持搜索）。必须传 `instructions`，否则中转套上它自己的 Codex 人设。实测一份报告 40–60 秒、搜索 3–4 次
+- 运行方式：`POST /api/lab/runs` 建一行 `lab_runs` 立刻返回，模型在 `after()` 里跑（`maxDuration=300`，项目开了 Fluid）；页面每 3 秒轮询 `GET /api/lab/runs/[id]`，手机锁屏不影响。超过 330 秒还在 running 视为失败
+- `lab_runs` 时间列是 TIMESTAMPTZ：不带时区的 TIMESTAMP 在本机会被当成东八区本地时间，差 8 小时（第一次就因此误判超时）
+- 额度单独计：`lab_usage.tool_runs`，每身份每天 15 次、全站 80 次（`LAB_DAILY_TOOL_RUNS_PER_OWNER` / `_TOTAL`）
+- 报告页「写观点卡」跳 `/lab?q=<公司>：` 预填；「接着看」跳 `/lab/tools/<slug>?company=` 只预填不自动跑
+- 加工具：`sync-skills.mjs` 的 SKILLS 加名字 → 跑同步 → `registry.ts` 加一条；P 站工作台 `portfolio/src/data/workflows.ts` 同步加一条（`skill` 字段写同源 skill）

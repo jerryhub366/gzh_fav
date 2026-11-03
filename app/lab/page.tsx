@@ -110,6 +110,13 @@ export default function LabHome() {
       setOwner(d.owner || '');
     }
     boot().catch(() => setOwner(''));
+    // 从研究工具「写观点卡」跳过来：/lab?q=快手：
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q) {
+      setText(q.slice(0, 200));
+      window.history.replaceState(null, '', window.location.pathname);
+      setTimeout(() => inputRef.current?.focus(), 100);
+    }
     // 页面已开着时粘贴同步链接只会改 hash，不会重新挂载，这里补一次。
     const onHash = () => {
       if (/^#\/sync\//.test(window.location.hash)) boot().then(() => window.location.reload());
