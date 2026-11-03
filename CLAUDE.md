@@ -200,3 +200,17 @@ The app is deployed on Vercel. Pushing to the `main` branch triggers a productio
 7. **No test suite** — There are currently no automated tests.
 
 8. **Analytics** — Vercel Analytics and Speed Insights are included in the root layout and track all pages automatically.
+
+---
+
+## Invest Lab (`/lab`)
+
+投资观点练习场：先自己答 → 三角色挑战（模型）→ 概率 + 证伪条件 + 复盘日 → 到期复盘 → 首页看校准。不做买卖建议。
+
+- 页面：`/lab`（首页：新建卡 + 连续交作品 + 校准）、`/lab/[id]`（单卡四步）、`/lab/principles`（公开原则页）、`/lab/s/[id]?k=<shareKey>`（朋友先押注再看答案，无需登录）
+- 代码：`lib/lab/principles.ts`（原则 P1–P20 + 题库，**改原则就加新版本**，旧卡指向旧版本）、`cards.ts`（单表 `lab_cards`，除筛选列外都放 `data` jsonb，懒迁移 `ensureLab()`）、`challenger.ts`（模型代理）、`markdown.ts`（导出到 vault 校准库）
+- API 都在 `/api/lab/*`，除 share 外都要 admin（cookie 或 `x-admin-token` 头，agent 可直接 `POST /api/lab/cards` 建卡）
+- Blank-first 在服务端强制：三道题和初始概率没填完，`/challenge` 返回 400
+- 模型：`CLOUDALPHA_API_KEY`（兼容 `OPENAI_API_KEY`），`LAB_LLM_MODEL` 默认 gpt-5.5 → `LAB_LLM_FALLBACK_MODEL` gpt-5.4-mini → 规则题库兜底。中转实际返回的模型名会变（实测请求 gpt-5.5 返回 `gpt-6.1-sol`），卡片记录的是返回值
+- `review_date` 必须 `::text` 取出：pg 把 DATE 解析成本地零点，转 ISO 在东八区会每存一次倒退一天
+- 本地开发连的是生产 Neon 库，测试卡用完删掉
