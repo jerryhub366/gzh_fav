@@ -205,12 +205,17 @@ The app is deployed on Vercel. Pushing to the `main` branch triggers a productio
 
 ## Invest Lab (`/lab`)
 
-投资观点练习场：先自己答 → 三角色挑战（模型）→ 概率 + 证伪条件 + 复盘日 → 到期复盘 → 首页看校准。不做买卖建议。
+投资观点练习场。不做买卖建议。
+
+**2026-11-03 改版为对话式**（表单版实测没人走完：用户把整段想法写进“一句话观点”框后又被要求答三道题，直接放弃；三个挑战 + 四个收敛字段一次铺开是第二道墙）：一句话开局 → 陪练一次只问一个问题、问 3 次（澄清核心 → 换视角攻击 → 逼出证伪信号）→ 用用户原话整理成卡 → 点一个把握程度收卡 → 到期复盘。必填输入只剩：开局一句 + 3 句回答 + 1 次点击。没观点的日子用「今日一问」（`lib/lab/daily.ts`，按日期轮换）。
+- 新卡 `data.mode='chat'`，对话存 `data.turns`；旧表单卡走 `app/lab/[id]/LegacyCard.tsx` + `/challenge` 接口，只为兼容
+- 陪练逻辑 `lib/lab/coach.ts`（prompt 里的分阶段指令和“分清谁说了什么”规则是调过的，改之前先跑几个场景对比），模型调用统一走 `lib/lab/llm.ts` 的 `chatJSON`
+- 接口：`POST /api/lab/start`（`{text}` 或 `{daily:true,index}`）、`POST /api/lab/cards/[id]/turn`（`{reply}` 或 `{finish:true}`），每次模型调用记一次额度
 
 - 页面：`/lab`（首页：新建卡 + 连续交作品 + 校准）、`/lab/[id]`（单卡四步）、`/lab/principles`（公开原则页）、`/lab/s/[id]?k=<shareKey>`（朋友先押注再看答案，无需登录）
 - 代码：`lib/lab/principles.ts`（原则 P1–P20 + 题库，**改原则就加新版本**，旧卡指向旧版本）、`cards.ts`（单表 `lab_cards`，除筛选列外都放 `data` jsonb，懒迁移 `ensureLab()`）、`challenger.ts`（模型代理）、`markdown.ts`（导出到 vault 校准库）
 - **不走 admin 登录**（2026-11-03 用户要求当独立站点用）：每个浏览器首次访问由 `GET /api/lab/me` 发一个随机身份 cookie `invest_lab_owner`，卡片按 `owner_id` 隔离，别人的卡一律 404。换设备用首页底部的同步链接 `/lab#/sync/<身份>`；agent 用 `x-lab-owner` 头即可 `POST /api/lab/cards` 建卡（`lib/lab/owner.ts`）
-- 模型额度：`lab_usage` 表计数，每身份每天 30 次、全站每天 300 次（`LAB_DAILY_CHALLENGES_PER_OWNER` / `LAB_DAILY_CHALLENGES_TOTAL`），超了退回规则题库
+- 模型额度：`lab_usage` 表计数，每身份每天 80 次、全站每天 600 次（一张对话卡约 4 次）（`LAB_DAILY_CHALLENGES_PER_OWNER` / `LAB_DAILY_CHALLENGES_TOTAL`），超了退回规则题库
 - Blank-first 在服务端强制：三道题和初始概率没填完，`/challenge` 返回 400
 - 模型：`CLOUDALPHA_API_KEY`（兼容 `OPENAI_API_KEY`），`LAB_LLM_MODEL` 默认 gpt-5.5 → `LAB_LLM_FALLBACK_MODEL` gpt-5.4-mini → 规则题库兜底。中转实际返回的模型名会变（实测请求 gpt-5.5 返回 `gpt-6.1-sol`），卡片记录的是返回值
 - `review_date` 必须 `::text` 取出：pg 把 DATE 解析成本地零点，转 ISO 在东八区会每存一次倒退一天

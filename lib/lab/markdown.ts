@@ -26,19 +26,31 @@ export function cardToMarkdown(card: Card) {
     '',
     `- 类型：${kind}`,
     `- 冲动来源：${d.impulseSource.join('、') || '—'}${d.impulseNote ? `（${d.impulseNote}）` : ''}`,
-    `- 概率：${d.initialProbability ?? '—'}% → ${d.finalProbability ?? '—'}%`,
+    d.mode === 'chat' ? `- 把握：${d.finalProbability ?? '—'}%` : `- 概率：${d.initialProbability ?? '—'}% → ${d.finalProbability ?? '—'}%`,
     '',
-    '## 先自己答',
-    '',
-    ...DRAFT_QUESTIONS[card.kind].flatMap((q) => [`**${q.text}**（${q.ref}）`, '', d.draftAnswers[q.key] || '—', '']),
-    '## 挑战与回应',
-    '',
-    ...d.challenges.flatMap((c) => [
-      `**${c.persona}**（${c.ref}${c.source === 'rule' ? '，规则题库' : ''}）：${c.text}`,
-      '',
-      `${c.rejected ? '❌ 挑战不成立：' : '↳ '}${c.reply || '—'}`,
-      '',
-    ]),
+    ...(d.mode === 'chat'
+      ? [
+          '## 陪练对话',
+          '',
+          ...(d.turns || []).flatMap((t) => [
+            t.role === 'me' ? `**我**：${t.text}` : `**${t.persona || '陪练'}**${t.ref ? `（${t.ref}）` : ''}：${t.text}`,
+            '',
+          ]),
+          ...(d.summary?.weakest?.length ? [`> 陪练的观察：${d.summary.weakest.join('；')}`, ''] : []),
+        ]
+      : [
+          '## 先自己答',
+          '',
+          ...DRAFT_QUESTIONS[card.kind].flatMap((q) => [`**${q.text}**（${q.ref}）`, '', d.draftAnswers[q.key] || '—', '']),
+          '## 挑战与回应',
+          '',
+          ...d.challenges.flatMap((c) => [
+            `**${c.persona}**（${c.ref}${c.source === 'rule' ? '，规则题库' : ''}）：${c.text}`,
+            '',
+            `${c.rejected ? '❌ 挑战不成立：' : '↳ '}${c.reply || '—'}`,
+            '',
+          ]),
+        ]),
     '## 收敛',
     '',
     `- 关键假设：${d.keyAssumption || '—'}`,

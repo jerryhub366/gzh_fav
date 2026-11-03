@@ -1,17 +1,9 @@
 import { Card, Challenge } from './cards';
 import { CARD_KINDS, DRAFT_QUESTIONS, RULE_CHALLENGES, principlesAsPrompt } from './principles';
+import { chatJSON } from './llm';
 
-// 挑战者：一次模型调用，三个角色各提一个挑战。模型挂了就退回规则题库，流程不中断。
-// 密钥只从服务端环境变量读；返回给前端的错误不带上游细节。
-
-const BASE_URL = process.env.LAB_LLM_BASE_URL || 'https://api.cloudalpha.top/v1';
-// 别配 gpt-5.4：cloudalpha 中转会收下请求但静默换成别的模型。
-const MODELS = [process.env.LAB_LLM_MODEL || 'gpt-5.5', process.env.LAB_LLM_FALLBACK_MODEL || 'gpt-5.4-mini'];
-const TIMEOUT_MS = 60000;
-
-function apiKey() {
-  return process.env.CLOUDALPHA_API_KEY || process.env.OPENAI_API_KEY || '';
-}
+// 旧版表单式卡片的挑战者：一次模型调用，三个角色各提一个挑战。模型挂了就退回规则题库。
+// 新卡走 coach.ts 的对话式陪练，这里只服务 2026-11-03 之前建的表单卡。
 
 const SYSTEM_PROMPT = `你是一名价值投资思维训练的“挑战者”，不是荐股者。
 规则：
@@ -49,48 +41,19 @@ ${answers}
 {"challenges":[{"persona":"空头","text":"...","ref":"P11"},{"persona":"竞争对手","text":"...","ref":"P10"},{"persona":"芒格","text":"...","ref":"P12"}],"weakest":["...","..."]}`;
 }
 
-function parseJson(text: string) {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) throw new Error('no json');
-  return JSON.parse(text.slice(start, end + 1));
-}
-
-async function callModel(model: string, card: Card) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-  try {
-    const res = await fetch(`${BASE_URL}/chat/completions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey()}` },
-      body: JSON.stringify({
-        model,
-        max_tokens: 1200,
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: buildUserPrompt(card) },
-        ],
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    const parsed = parseJson(json.choices?.[0]?.message?.content || '');
-    const challenges: Challenge[] = (parsed.challenges || [])
-      .filter((c: any) => c && typeof c.text === 'string' && c.text.trim())
-      .slice(0, 5)
-      .map((c: any) => ({
-        persona: String(c.persona || '挑战者'),
-        text: c.text.trim(),
-        ref: String(c.ref || ''),
-        source: 'model' as const,
-      }));
-    if (challenges.length === 0) throw new Error('empty challenges');
-    const weakest = Array.isArray(parsed.weakest) ? parsed.weakest.map(String).slice(0, 3) : [];
-    return { challenges, weakest, modelId: (json.model as string) || model };
-  } finally {
-    clearTimeout(timer);
-  }
+function toChallenges(parsed: any) {
+  const challenges: Challenge[] = (parsed.challenges || [])
+    .filter((c: any) => c && typeof c.text === 'string' && c.text.trim())
+    .slice(0, 5)
+    .map((c: any) => ({
+      persona: String(c.persona || '挑战者'),
+      text: c.text.trim(),
+      ref: String(c.ref || ''),
+      source: 'model' as const,
+    }));
+  if (challenges.length === 0) throw new Error('empty challenges');
+  const weakest: string[] = Array.isArray(parsed.weakest) ? parsed.weakest.map(String).slice(0, 3) : [];
+  return { challenges, weakest };
 }
 
 export async function generateChallenges(card: Card, quotaError: string | null = null) {
@@ -100,22 +63,10 @@ export async function generateChallenges(card: Card, quotaError: string | null =
     return { challenges: ruleChallenges, meta: { modelId: null, fallback: true, error: quotaError } };
   }
 
-  if (!apiKey()) {
-    return { challenges: ruleChallenges, meta: { modelId: null, fallback: true, error: '未配置模型密钥' } };
+  try {
+    const { data, modelId } = await chatJSON(SYSTEM_PROMPT, buildUserPrompt(card), toChallenges);
+    return { challenges: data.challenges, meta: { modelId, fallback: false, weakest: data.weakest } };
+  } catch (err: any) {
+    return { challenges: ruleChallenges, meta: { modelId: null, fallback: true, error: err.message } };
   }
-
-  let lastError = '';
-  for (const model of MODELS) {
-    try {
-      const result = await callModel(model, card);
-      return {
-        challenges: result.challenges,
-        meta: { modelId: result.modelId, fallback: false, weakest: result.weakest },
-      };
-    } catch (err: any) {
-      lastError = err?.name === 'AbortError' ? '超时' : err?.message || 'unknown';
-      console.error(`lab challenger ${model} failed:`, lastError);
-    }
-  }
-  return { challenges: ruleChallenges, meta: { modelId: null, fallback: true, error: '模型暂不可用' } };
 }

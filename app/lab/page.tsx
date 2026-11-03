@@ -1,13 +1,24 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Card } from '../../lib/lab/cards';
-import { CARD_KINDS, IMPULSE_SOURCES } from '../../lib/lab/principles';
-import { OUTCOME_LABEL, STATUS_LABEL, today } from '../../lib/lab/labels';
+import { CARD_KINDS } from '../../lib/lab/principles';
+import { dailyQuestion } from '../../lib/lab/daily';
+import { OUTCOME_LABEL, today } from '../../lib/lab/labels';
 
-const inputClass =
-  'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500';
+const EXAMPLES = ['快手跌到什么程度可以买？', '最近福耀玻璃感觉很不错', '英伟达是不是太贵了，该抛了？'];
+
+// 打样：一次完整陪练长什么样。示例里的数字是假设，仅演示流程。
+const DEMO: { role: 'me' | 'coach'; who?: string; text: string }[] = [
+  { role: 'me', text: '快手是不是再降点就可以考虑了，股息率涨上来就可以入' },
+  { role: 'coach', who: '陪练 · P18 价格要写出锚', text: '你说的“股息率涨上来”，具体到多少算够？这个数是和什么比出来的？' },
+  { role: 'me', text: '大概 5% 吧，和港股其他高息股比' },
+  { role: 'coach', who: '竞争对手 · P10 快变量', text: '如果抖音明年在下沉市场再砸一轮补贴，快手的利润还撑得住 5% 的分红吗？' },
+  { role: 'me', text: '说不清，电商可能会被打，但广告应该还稳' },
+  { role: 'coach', who: '陪练 · P12 看最差的一项', text: '那出现什么看得见的信号，你会承认“分红撑不住”？' },
+  { role: 'me', text: '连续两个季度广告收入同比下滑，或者分红回购总额变少' },
+];
 
 function localDay(iso: string) {
   const d = new Date(iso);
@@ -45,30 +56,26 @@ function calibration(cards: Card[]) {
 
 function CardRow({ card, highlight }: { card: Card; highlight?: boolean }) {
   const p = card.data.finalProbability ?? card.data.initialProbability;
+  const action =
+    card.status === 'draft' ? '继续聊 →' : card.status === 'challenged' ? '差一步收卡 →' : highlight ? '去复盘 →' : '';
   return (
     <a
       href={`/lab/${card.id}`}
-      className={`block border rounded-lg p-4 transition-colors ${
+      className={`block border rounded-xl px-4 py-3 transition-colors ${
         highlight
           ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/30 hover:border-amber-500'
-          : 'border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400'
+          : 'border-gray-200 dark:border-gray-700 hover:border-gray-400'
       }`}
     >
-      <div className="flex items-center gap-2 text-xs text-gray-500 mb-1">
+      <div className="flex items-center gap-2 text-xs text-gray-500">
         <span className="font-medium text-gray-700 dark:text-gray-300">{card.company}</span>
-        <span>·</span>
-        <span>{CARD_KINDS.find((k) => k.key === card.kind)?.label}</span>
-        <span>·</span>
-        <span>{STATUS_LABEL[card.status]}</span>
-        {card.data.friends.length > 0 && <span>· {card.data.friends.length} 位朋友押注</span>}
+        <span>· {CARD_KINDS.find((k) => k.key === card.kind)?.label}</span>
+        {p != null && card.status !== 'draft' && <span>· 把握 {p}%</span>}
+        {card.status === 'resolved' && card.data.outcome && <span>· {OUTCOME_LABEL[card.data.outcome]}</span>}
+        {card.data.friends.length > 0 && <span>· {card.data.friends.length} 人押注</span>}
+        <span className="ml-auto text-blue-600">{action}</span>
       </div>
-      <p className="text-gray-900 dark:text-white">{card.claim}</p>
-      <div className="flex gap-3 text-xs text-gray-500 mt-2">
-        {p != null && <span>概率 {p}%</span>}
-        {card.status === 'open' && card.reviewDate && <span>复盘日 {card.reviewDate}</span>}
-        {card.status === 'resolved' && card.data.outcome && <span>{OUTCOME_LABEL[card.data.outcome]}</span>}
-        <span className="ml-auto">{localDay(card.createdAt)}</span>
-      </div>
+      <p className="text-gray-900 dark:text-white mt-0.5">{card.claim}</p>
     </a>
   );
 }
@@ -76,17 +83,15 @@ function CardRow({ card, highlight }: { card: Card; highlight?: boolean }) {
 export default function LabHome() {
   const router = useRouter();
   const [owner, setOwner] = useState<string | null>(null);
-  const [syncCopied, setSyncCopied] = useState(false);
   const [cards, setCards] = useState<Card[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [company, setCompany] = useState('');
-  const [claim, setClaim] = useState('');
-  const [kind, setKind] = useState<string>('quality');
-  const [impulse, setImpulse] = useState<string[]>([]);
-  const [impulseNote, setImpulseNote] = useState('');
-  const [creating, setCreating] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
+  const [syncCopied, setSyncCopied] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const daily = dailyQuestion();
 
   // 先确定身份：同步链接 #/sync/<身份> 优先，否则用（或新发）本浏览器的身份。
   useEffect(() => {
@@ -105,7 +110,45 @@ export default function LabHome() {
       setOwner(d.owner || '');
     }
     boot().catch(() => setOwner(''));
+    // 页面已开着时粘贴同步链接只会改 hash，不会重新挂载，这里补一次。
+    const onHash = () => {
+      if (/^#\/sync\//.test(window.location.hash)) boot().then(() => window.location.reload());
+    };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
   }, []);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/lab/cards', { cache: 'no-store' });
+      const data = await res.json();
+      if (res.ok) setCards(data.cards);
+    } finally {
+      setLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (owner) load();
+  }, [owner, load]);
+
+  async function start(body: Record<string, unknown>, key: string) {
+    setError('');
+    setBusy(key);
+    try {
+      const res = await fetch('/api/lab/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '开局失败');
+      router.push(`/lab/${data.card.id}`);
+    } catch (err: any) {
+      setError(err.message);
+      setBusy('');
+    }
+  }
 
   function copySync() {
     navigator.clipboard.writeText(`${window.location.origin}/lab#/sync/${owner}`).then(() => {
@@ -114,54 +157,14 @@ export default function LabHome() {
     });
   }
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetch('/api/lab/cards', { cache: 'no-store' });
-      const data = await res.json();
-      if (res.ok) setCards(data.cards);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (owner) load();
-  }, [owner, load]);
-
-  async function create(e: React.FormEvent) {
-    e.preventDefault();
-    setError('');
-    if (!impulse.length && !impulseNote.trim()) {
-      setError('先做冲动自查：你为什么现在对它有感觉？');
-      return;
-    }
-    setCreating(true);
-    try {
-      const res = await fetch('/api/lab/cards', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ company, claim, kind, impulseSource: impulse, impulseNote }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '创建失败');
-      router.push(`/lab/${data.card.id}`);
-    } catch (err: any) {
-      setError(err.message);
-      setCreating(false);
-    }
-  }
-
   const t = today();
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return cards;
-    return cards.filter((c) => `${c.company} ${c.claim}`.toLowerCase().includes(q));
+    return q ? cards.filter((c) => `${c.company} ${c.claim}`.toLowerCase().includes(q)) : cards;
   }, [cards, filter]);
-  const due = visible.filter((c) => c.status === 'open' && c.reviewDate && c.reviewDate <= t);
-  const working = visible.filter((c) => c.status === 'draft' || c.status === 'challenged');
-  const waiting = visible.filter((c) => c.status === 'open' && !(c.reviewDate && c.reviewDate <= t));
-  const resolved = visible.filter((c) => c.status === 'resolved');
+  const due = cards.filter((c) => c.status === 'open' && c.reviewDate && c.reviewDate <= t);
+  const working = cards.filter((c) => c.status === 'draft' || c.status === 'challenged');
+  const archive = visible.filter((c) => !due.includes(c) && !working.includes(c));
 
   const days = last30Days();
   const perDay = useMemo(() => {
@@ -176,145 +179,150 @@ export default function LabHome() {
     else break;
   }
   const cal = calibration(cards);
-
-  if (owner === null) return <main className="max-w-3xl mx-auto p-6 text-gray-500">Loading...</main>;
+  const doneToday = Boolean(perDay[localDay(new Date().toISOString())]);
 
   return (
-    <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
-      <h1 className="text-3xl font-bold mb-1">今天有什么观点？</h1>
-      <p className="text-sm text-gray-500 mb-6">先自己答 → 被三个角色挑战 → 写下证伪条件 → 到期复盘。</p>
+    <main className="max-w-2xl mx-auto px-4 sm:px-6 py-6">
+      <h1 className="text-3xl font-bold">说一句你最近的投资观点</h1>
+      <p className="text-sm text-gray-500 mt-1 mb-4">陪练追问你 3 次，把你自己的话整理成一张卡，到期回头看你对了没有。约 3 分钟。</p>
 
-      <form onSubmit={create} className="border border-gray-300 dark:border-gray-600 rounded-xl p-4 space-y-3 mb-8">
-        <div className="flex flex-wrap gap-2">
-          {CARD_KINDS.map((k) => (
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (text.trim()) start({ text: text.trim() }, 'text');
+        }}
+      >
+        <textarea
+          ref={inputRef}
+          rows={3}
+          className="w-full px-4 py-3 text-lg border-2 border-gray-300 dark:border-gray-600 rounded-2xl bg-white dark:bg-gray-900 text-gray-900 dark:text-white focus:outline-none focus:border-blue-500"
+          placeholder="随口说，像在群里聊天那样。比如：快手再跌一点、股息率上来就可以买了"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && text.trim()) start({ text: text.trim() }, 'text');
+          }}
+        />
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <button disabled={!text.trim() || !!busy} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-40">
+            {busy === 'text' ? '陪练在读…' : '开始陪练'}
+          </button>
+          <span className="text-xs text-gray-400 mr-1">试试：</span>
+          {EXAMPLES.map((ex) => (
             <button
-              key={k.key}
+              key={ex}
               type="button"
-              onClick={() => setKind(k.key)}
-              className={`px-3 py-1.5 text-sm rounded-full border ${
-                kind === k.key
-                  ? 'bg-blue-600 border-blue-600 text-white'
-                  : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300'
-              }`}
+              onClick={() => {
+                setText(ex);
+                inputRef.current?.focus();
+              }}
+              className="px-2.5 py-1 text-xs rounded-full border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800"
             >
-              {k.label}
+              {ex}
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-[160px_1fr] gap-2">
-          <input className={inputClass} placeholder="公司，如 快手" value={company} onChange={(e) => setCompany(e.target.value)} required />
-          <input
-            className={inputClass}
-            placeholder={`一句话观点，如「${CARD_KINDS.find((k) => k.key === kind)?.example}」`}
-            value={claim}
-            onChange={(e) => setClaim(e.target.value)}
-            required
-          />
-        </div>
-        <div>
-          <p className="text-sm text-gray-600 dark:text-gray-300 mb-2">冲动自查：为什么是现在？</p>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {IMPULSE_SOURCES.map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setImpulse((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))}
-                className={`px-2.5 py-1 text-xs rounded-full border ${
-                  impulse.includes(s)
-                    ? 'bg-gray-800 border-gray-800 text-white dark:bg-gray-200 dark:text-gray-900'
-                    : 'border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300'
-                }`}
-              >
-                {s}
-              </button>
-            ))}
-          </div>
-          <input className={inputClass} placeholder="补一句（可选）：看到了什么、谁说的、跌了多少" value={impulseNote} onChange={(e) => setImpulseNote(e.target.value)} />
-        </div>
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <button disabled={creating} className="px-5 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50">
-          {creating ? '创建中…' : '开一张观点卡'}
-        </button>
+        {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
       </form>
 
-      <section className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
-        <div className="border border-gray-300 dark:border-gray-600 rounded-lg p-4">
-          <p className="text-xs text-gray-500">连续交作品</p>
-          <p className="text-2xl font-semibold">{streak} 天</p>
-          <div className="flex gap-[3px] mt-3" title="近 30 天每天的观点卡">
-            {days.map((d) => (
-              <span
-                key={d}
-                title={`${d}：${perDay[d] || 0} 张`}
-                className={`h-3 flex-1 rounded-sm ${
-                  perDay[d] >= 2 ? 'bg-green-600' : perDay[d] ? 'bg-green-400' : 'bg-gray-200 dark:bg-gray-700'
-                }`}
-              />
-            ))}
-          </div>
-        </div>
-        <div className="border border-gray-300 dark:border-gray-600 rounded-lg p-4">
-          <p className="text-xs text-gray-500">观点卡</p>
-          <p className="text-2xl font-semibold">{cards.length}</p>
-          <p className="text-xs text-gray-500 mt-2">
-            等复盘 {cards.filter((c) => c.status === 'open').length} · 已复盘 {cards.filter((c) => c.status === 'resolved').length}
-          </p>
-        </div>
-        <div className="border border-gray-300 dark:border-gray-600 rounded-lg p-4">
-          <p className="text-xs text-gray-500">校准（已复盘且有对错）</p>
-          {cal.n === 0 ? (
-            <p className="text-sm text-gray-500 mt-2">还没有复盘结果。到期复盘后，这里会告诉你“说 80% 的时候，实际对了几成”。</p>
-          ) : (
-            <>
-              <p className="text-2xl font-semibold">Brier {cal.brier.toFixed(2)}</p>
-              <div className="text-xs text-gray-500 mt-1 space-y-0.5">
-                {cal.buckets.filter((b) => b.n).map((b) => (
-                  <p key={b.lo}>
-                    说 {b.lo}–{b.hi}%：{b.n} 次，对了 {Math.round((b.hits / b.n) * 100)}%
-                  </p>
-                ))}
-              </div>
-            </>
-          )}
-        </div>
+      <section className="mt-6 rounded-2xl bg-gray-100 dark:bg-gray-800 p-4">
+        <p className="text-xs text-gray-500 mb-1">没想法的日子 · 今日一问 · {daily.company}</p>
+        <p className="text-gray-900 dark:text-white">{daily.text}</p>
+        <button
+          onClick={() => start({ daily: true, index: daily.index }, 'daily')}
+          disabled={!!busy}
+          className="mt-3 px-4 py-1.5 text-sm bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 disabled:opacity-40"
+        >
+          {busy === 'daily' ? '准备中…' : '回答这一问'}
+        </button>
       </section>
 
-      <input className={`${inputClass} mb-6`} placeholder="按公司或关键词找卡" value={filter} onChange={(e) => setFilter(e.target.value)} />
-
-      {loading && <p className="text-gray-500">Loading...</p>}
-      {!loading && cards.length === 0 && (
-        <p className="text-gray-500 text-center py-8">还没有观点卡。上面写下今天的第一个观点。</p>
+      {(due.length > 0 || working.length > 0) && (
+        <section className="mt-8 space-y-2">
+          <h2 className="text-sm font-semibold text-gray-500">接着做</h2>
+          {due.map((c) => <CardRow key={c.id} card={c} highlight />)}
+          {working.map((c) => <CardRow key={c.id} card={c} />)}
+        </section>
       )}
 
-      {[
-        { title: '到期待复盘', list: due, highlight: true },
-        { title: '进行中', list: working },
-        { title: '等复盘', list: waiting },
-        { title: '已复盘', list: resolved },
-      ]
-        .filter((s) => s.list.length)
-        .map((s) => (
-          <section key={s.title} className="mb-8">
-            <h2 className="text-sm font-semibold text-gray-500 mb-3">
-              {s.title}（{s.list.length}）
-            </h2>
-            <div className="space-y-3">
-              {s.list.map((c) => (
-                <CardRow key={c.id} card={c} highlight={s.highlight} />
-              ))}
-            </div>
-          </section>
-        ))}
+      <details className="mt-8 group" open={loaded && cards.length === 0}>
+        <summary className="cursor-pointer text-sm font-semibold text-gray-500 select-none">看看一次陪练长什么样（30 秒）</summary>
+        <div className="mt-3 space-y-2.5 text-sm">
+          {DEMO.map((m, i) =>
+            m.role === 'me' ? (
+              <div key={i} className="flex justify-end">
+                <p className="max-w-[85%] rounded-2xl rounded-br-sm bg-blue-600 text-white px-3.5 py-2">{m.text}</p>
+              </div>
+            ) : (
+              <div key={i} className="max-w-[90%] rounded-2xl rounded-bl-sm bg-gray-100 dark:bg-gray-800 px-3.5 py-2">
+                <p className="text-[11px] text-gray-500">{m.who}</p>
+                <p className="text-gray-900 dark:text-white">{m.text}</p>
+              </div>
+            ),
+          )}
+          <div className="border-2 border-blue-200 dark:border-blue-900 rounded-2xl p-3.5 space-y-1">
+            <p className="text-xs text-gray-500">→ 自动整理成卡，你只需点一个把握程度</p>
+            <p className="font-semibold">快手股息率到 5% 左右可以开始买</p>
+            <p><span className="text-gray-500">最依赖的假设：</span>广告收入稳得住，撑得起分红</p>
+            <p><span className="text-gray-500">什么会让我认错：</span>连续两季广告同比下滑，或分红回购变少</p>
+            <p><span className="text-gray-500">下一步去查：</span>近 8 个季度广告收入同比；分红 + 回购总额</p>
+            <p><span className="text-gray-500">把握：</span>50% · 下次财报后回看</p>
+          </div>
+          <p className="text-xs text-gray-400">示例数字为假设，仅演示流程，不构成投资建议。</p>
+        </div>
+      </details>
 
-      <section className="mt-10 border-t border-gray-200 dark:border-gray-700 pt-4 text-xs text-gray-500 leading-relaxed">
-        <p>
-          观点卡跟着这个浏览器走，不需要登录。换手机/电脑继续用：
-          <button onClick={copySync} className="mx-1 text-blue-600 hover:underline">
-            {syncCopied ? '已复制' : '复制同步链接'}
-          </button>
-          在另一台设备打开即可。这个链接等于你的钥匙，别发给别人；想让朋友参与，用单张卡里的「朋友押注链接」。
-        </p>
+      <section className="mt-8 grid grid-cols-3 gap-3 text-center">
+        <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+          <p className="text-2xl font-semibold">{streak}</p>
+          <p className="text-xs text-gray-500">{doneToday ? '连续天数 · 今天已交' : '连续天数'}</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+          <p className="text-2xl font-semibold">{cards.filter((c) => c.status === 'open' || c.status === 'resolved').length}</p>
+          <p className="text-xs text-gray-500">收进卡片册</p>
+        </div>
+        <div className="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+          <p className="text-2xl font-semibold">{cal.n ? cal.brier.toFixed(2) : '—'}</p>
+          <p className="text-xs text-gray-500">{cal.n ? `校准分（${cal.n} 张，越低越准）` : '校准分（复盘后才有）'}</p>
+        </div>
       </section>
+      <div className="flex gap-[3px] mt-3" title="近 30 天每天的观点卡">
+        {days.map((d) => (
+          <span
+            key={d}
+            title={`${d}：${perDay[d] || 0} 张`}
+            className={`h-2.5 flex-1 rounded-sm ${perDay[d] >= 2 ? 'bg-green-600' : perDay[d] ? 'bg-green-400' : 'bg-gray-200 dark:bg-gray-700'}`}
+          />
+        ))}
+      </div>
+      {cal.n > 0 && (
+        <p className="text-xs text-gray-500 mt-2">
+          {cal.buckets.filter((b) => b.n).map((b) => `说 ${b.lo}–${b.hi}% 时对了 ${Math.round((b.hits / b.n) * 100)}%（${b.n} 次）`).join(' · ')}
+        </p>
+      )}
+
+      {archive.length > 0 && (
+        <section className="mt-8 space-y-2">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-semibold text-gray-500">卡片册</h2>
+            {cards.length > 6 && (
+              <input
+                className="ml-auto px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-transparent"
+                placeholder="按公司找"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              />
+            )}
+          </div>
+          {archive.map((c) => <CardRow key={c.id} card={c} />)}
+        </section>
+      )}
+
+      <p className="mt-10 border-t border-gray-200 dark:border-gray-700 pt-4 text-xs text-gray-500 leading-relaxed">
+        不用登录，卡片跟着这个浏览器走。换手机/电脑：
+        <button onClick={copySync} className="mx-1 text-blue-600 hover:underline">{syncCopied ? '已复制' : '复制同步链接'}</button>
+        在另一台设备打开。这个链接等于钥匙，别发给别人；想让朋友参与，用卡片里的「发给朋友押注」。
+      </p>
     </main>
   );
 }

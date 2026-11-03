@@ -24,7 +24,27 @@ export interface FriendTake {
   createdAt: string;
 }
 
+// 对话式卡片（2026-11-03 改版）：陪练一次问一个问题，三轮后把用户原话整理成卡。
+export interface Turn {
+  role: 'coach' | 'me';
+  text: string;
+  persona?: string;
+  ref?: string;
+  source?: 'model' | 'rule' | 'daily';
+  at: string;
+}
+
+export interface CardSummary {
+  weakest: string[];
+  modelId: string | null;
+  fallback: boolean;
+}
+
 export interface CardData {
+  mode?: 'chat';
+  turns?: Turn[];
+  summary?: CardSummary;
+  coachNote?: string;
   impulseSource: string[];
   impulseNote: string;
   draftAnswers: Record<string, string>;
@@ -238,8 +258,8 @@ export function publicView(card: Card, revealed: boolean) {
 }
 
 // 模型调用额度：每个身份每天 MAX_PER_OWNER 次，全站每天 MAX_TOTAL 次，超了退回规则题库。
-const MAX_PER_OWNER = Number(process.env.LAB_DAILY_CHALLENGES_PER_OWNER) || 30;
-const MAX_TOTAL = Number(process.env.LAB_DAILY_CHALLENGES_TOTAL) || 300;
+const MAX_PER_OWNER = Number(process.env.LAB_DAILY_CHALLENGES_PER_OWNER) || 80;
+const MAX_TOTAL = Number(process.env.LAB_DAILY_CHALLENGES_TOTAL) || 600;
 
 export async function consumeChallengeQuota(ownerId: string): Promise<string | null> {
   await ensureLab();
@@ -253,4 +273,12 @@ export async function consumeChallengeQuota(ownerId: string): Promise<string | n
   `;
   if (rows[0].challenges > MAX_PER_OWNER) return `今日模型额度（${MAX_PER_OWNER} 次）已用完`;
   return null;
+}
+
+export async function createChatCard(
+  ownerId: string,
+  input: { company: string; claim: string; kind: CardKind; turns: Turn[]; coachNote?: string },
+): Promise<Card> {
+  const card = await createCard(ownerId, { company: input.company, claim: input.claim, kind: input.kind });
+  return saveCard(card.id, { data: { mode: 'chat', turns: input.turns, coachNote: input.coachNote || '' } });
 }

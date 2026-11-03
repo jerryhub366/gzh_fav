@@ -1,6 +1,6 @@
 export const STATUS_LABEL = {
-  draft: '自己答中',
-  challenged: '被挑战中',
+  draft: '陪练中',
+  challenged: '待收卡',
   open: '等复盘',
   resolved: '已复盘',
 } as const;
