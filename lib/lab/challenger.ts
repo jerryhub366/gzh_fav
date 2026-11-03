@@ -93,8 +93,12 @@ async function callModel(model: string, card: Card) {
   }
 }
 
-export async function generateChallenges(card: Card) {
+export async function generateChallenges(card: Card, quotaError: string | null = null) {
   const ruleChallenges: Challenge[] = RULE_CHALLENGES[card.kind].map((c) => ({ ...c, source: 'rule' }));
+
+  if (quotaError) {
+    return { challenges: ruleChallenges, meta: { modelId: null, fallback: true, error: quotaError } };
+  }
 
   if (!apiKey()) {
     return { challenges: ruleChallenges, meta: { modelId: null, fallback: true, error: '未配置模型密钥' } };

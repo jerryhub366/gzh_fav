@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { getAdminSession } from '../../../lib/adminClient';
 import type { Card, CardData, Challenge } from '../../../lib/lab/cards';
 import { CARD_KINDS, DRAFT_QUESTIONS, principleById } from '../../../lib/lab/principles';
 import { OUTCOME_LABEL, STANCE_LABEL, STATUS_LABEL, today } from '../../../lib/lab/labels';
@@ -98,7 +97,6 @@ function Step({ n, title, active, done, children }: { n: number; title: string; 
 export default function CardPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
   const [card, setCard] = useState<Card | null>(null);
   const [error, setError] = useState('');
   const [savedAt, setSavedAt] = useState('');
@@ -108,15 +106,11 @@ export default function CardPage() {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    getAdminSession().then((s) => setAuthorized(s.admin));
-  }, []);
-
-  useEffect(() => {
-    if (!authorized || !id) return;
+    if (!id) return;
     fetch(`/api/lab/cards/${id}`, { cache: 'no-store' })
       .then((r) => r.json().then((d) => ({ ok: r.ok, d })))
-      .then(({ ok, d }) => (ok ? setCard(d.card) : setError(d.error || '加载失败')));
-  }, [authorized, id]);
+      .then(({ ok, d }) => (ok ? setCard(d.card) : setError(ok === false && d.error === 'Card not found' ? '找不到这张卡：它可能属于另一个浏览器，用首页底部的同步链接把身份带过来。' : d.error || '加载失败')));
+  }, [id]);
 
   const flush = useCallback(
     async (extra: Record<string, unknown> = {}) => {
@@ -193,10 +187,9 @@ export default function CardPage() {
     });
   }
 
-  if (authorized === null || (authorized && !card && !error)) {
+  if (!card && !error) {
     return <main className="max-w-3xl mx-auto p-6 text-gray-500">Loading...</main>;
   }
-  if (!authorized) return <main className="max-w-3xl mx-auto p-6 text-amber-700">需要管理员登录。</main>;
   if (!card) return <main className="max-w-3xl mx-auto p-6 text-red-600">{error}</main>;
 
   const d = card.data;

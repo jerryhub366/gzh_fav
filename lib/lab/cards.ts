@@ -42,6 +42,7 @@ export interface CardData {
 
 export interface Card {
   id: string;
+  ownerId: string | null;
   company: string;
   claim: string;
   kind: CardKind;
@@ -90,6 +91,17 @@ async function migrate() {
     )
   `;
   await sql`CREATE INDEX IF NOT EXISTS idx_lab_cards_created ON lab_cards (created_at DESC)`;
+  // 2026-11-03：去掉 admin 限制，改为每个浏览器一个匿名身份，各看各的卡。
+  await sql`ALTER TABLE lab_cards ADD COLUMN IF NOT EXISTS owner_id TEXT`;
+  await sql`CREATE INDEX IF NOT EXISTS idx_lab_cards_owner ON lab_cards (owner_id, created_at DESC)`;
+  await sql`
+    CREATE TABLE IF NOT EXISTS lab_usage (
+      owner_id TEXT NOT NULL,
+      day DATE NOT NULL,
+      challenges INT NOT NULL DEFAULT 0,
+      PRIMARY KEY (owner_id, day)
+    )
+  `;
 }
 
 export function ensureLab() {
@@ -109,6 +121,7 @@ function toDate(value: any) {
 function mapRow(r: any): Card {
   return {
     id: r.id,
+    ownerId: r.owner_id || null,
     company: r.company,
     claim: r.claim,
     kind: r.kind,
@@ -125,9 +138,12 @@ function mapRow(r: any): Card {
   };
 }
 
-export async function listCards(): Promise<Card[]> {
+export async function listCards(ownerId: string): Promise<Card[]> {
   await ensureLab();
-  const { rows } = await sql`SELECT *, review_date::text AS review_date_text FROM lab_cards ORDER BY created_at DESC LIMIT 500`;
+  const { rows } = await sql`
+    SELECT *, review_date::text AS review_date_text FROM lab_cards
+    WHERE owner_id = ${ownerId} ORDER BY created_at DESC LIMIT 500
+  `;
   return rows.map(mapRow);
 }
 
@@ -137,7 +153,7 @@ export async function getCard(id: string): Promise<Card | null> {
   return rows[0] ? mapRow(rows[0]) : null;
 }
 
-export async function createCard(input: {
+export async function createCard(ownerId: string, input: {
   company: string;
   claim: string;
   kind: CardKind;
@@ -157,8 +173,8 @@ export async function createCard(input: {
   };
   const review = new Date(Date.now() + DEFAULT_REVIEW_DAYS[input.kind] * 86400000).toISOString().slice(0, 10);
   await sql`
-    INSERT INTO lab_cards (id, company, claim, kind, principle_version, review_date, share_key, data)
-    VALUES (${id}, ${input.company}, ${input.claim}, ${input.kind}, ${CURRENT_PRINCIPLE_VERSION},
+    INSERT INTO lab_cards (id, owner_id, company, claim, kind, principle_version, review_date, share_key, data)
+    VALUES (${id}, ${ownerId}, ${input.company}, ${input.claim}, ${input.kind}, ${CURRENT_PRINCIPLE_VERSION},
             ${review}, ${shareKey}, ${JSON.stringify(data)}::jsonb)
   `;
   return getCard(id);
@@ -219,4 +235,22 @@ export function publicView(card: Card, revealed: boolean) {
     outcome: card.data.outcome,
     friends: card.data.friends,
   };
+}
+
+// 模型调用额度：每个身份每天 MAX_PER_OWNER 次，全站每天 MAX_TOTAL 次，超了退回规则题库。
+const MAX_PER_OWNER = Number(process.env.LAB_DAILY_CHALLENGES_PER_OWNER) || 30;
+const MAX_TOTAL = Number(process.env.LAB_DAILY_CHALLENGES_TOTAL) || 300;
+
+export async function consumeChallengeQuota(ownerId: string): Promise<string | null> {
+  await ensureLab();
+  const day = new Date().toISOString().slice(0, 10);
+  const { rows: totalRows } = await sql`SELECT COALESCE(SUM(challenges), 0) AS total FROM lab_usage WHERE day = ${day}`;
+  if (Number(totalRows[0].total) >= MAX_TOTAL) return '今日全站模型额度已用完';
+  const { rows } = await sql`
+    INSERT INTO lab_usage (owner_id, day, challenges) VALUES (${ownerId}, ${day}, 1)
+    ON CONFLICT (owner_id, day) DO UPDATE SET challenges = lab_usage.challenges + 1
+    RETURNING challenges
+  `;
+  if (rows[0].challenges > MAX_PER_OWNER) return `今日模型额度（${MAX_PER_OWNER} 次）已用完`;
+  return null;
 }

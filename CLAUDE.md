@@ -209,7 +209,8 @@ The app is deployed on Vercel. Pushing to the `main` branch triggers a productio
 
 - 页面：`/lab`（首页：新建卡 + 连续交作品 + 校准）、`/lab/[id]`（单卡四步）、`/lab/principles`（公开原则页）、`/lab/s/[id]?k=<shareKey>`（朋友先押注再看答案，无需登录）
 - 代码：`lib/lab/principles.ts`（原则 P1–P20 + 题库，**改原则就加新版本**，旧卡指向旧版本）、`cards.ts`（单表 `lab_cards`，除筛选列外都放 `data` jsonb，懒迁移 `ensureLab()`）、`challenger.ts`（模型代理）、`markdown.ts`（导出到 vault 校准库）
-- API 都在 `/api/lab/*`，除 share 外都要 admin（cookie 或 `x-admin-token` 头，agent 可直接 `POST /api/lab/cards` 建卡）
+- **不走 admin 登录**（2026-11-03 用户要求当独立站点用）：每个浏览器首次访问由 `GET /api/lab/me` 发一个随机身份 cookie `invest_lab_owner`，卡片按 `owner_id` 隔离，别人的卡一律 404。换设备用首页底部的同步链接 `/lab#/sync/<身份>`；agent 用 `x-lab-owner` 头即可 `POST /api/lab/cards` 建卡（`lib/lab/owner.ts`）
+- 模型额度：`lab_usage` 表计数，每身份每天 30 次、全站每天 300 次（`LAB_DAILY_CHALLENGES_PER_OWNER` / `LAB_DAILY_CHALLENGES_TOTAL`），超了退回规则题库
 - Blank-first 在服务端强制：三道题和初始概率没填完，`/challenge` 返回 400
 - 模型：`CLOUDALPHA_API_KEY`（兼容 `OPENAI_API_KEY`），`LAB_LLM_MODEL` 默认 gpt-5.5 → `LAB_LLM_FALLBACK_MODEL` gpt-5.4-mini → 规则题库兜底。中转实际返回的模型名会变（实测请求 gpt-5.5 返回 `gpt-6.1-sol`），卡片记录的是返回值
 - `review_date` 必须 `::text` 取出：pg 把 DATE 解析成本地零点，转 ISO 在东八区会每存一次倒退一天

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { getAdminSession } from '../../lib/adminClient';
 import type { Card } from '../../lib/lab/cards';
 import { CARD_KINDS, IMPULSE_SOURCES } from '../../lib/lab/principles';
 import { OUTCOME_LABEL, STATUS_LABEL, today } from '../../lib/lab/labels';
@@ -76,7 +75,8 @@ function CardRow({ card, highlight }: { card: Card; highlight?: boolean }) {
 
 export default function LabHome() {
   const router = useRouter();
-  const [authorized, setAuthorized] = useState<boolean | null>(null);
+  const [owner, setOwner] = useState<string | null>(null);
+  const [syncCopied, setSyncCopied] = useState(false);
   const [cards, setCards] = useState<Card[]>([]);
   const [loading, setLoading] = useState(false);
   const [company, setCompany] = useState('');
@@ -88,9 +88,31 @@ export default function LabHome() {
   const [error, setError] = useState('');
   const [filter, setFilter] = useState('');
 
+  // 先确定身份：同步链接 #/sync/<身份> 优先，否则用（或新发）本浏览器的身份。
   useEffect(() => {
-    getAdminSession().then((s) => setAuthorized(s.admin));
+    async function boot() {
+      const match = window.location.hash.match(/^#\/sync\/([A-Za-z0-9_-]+)$/);
+      if (match) {
+        window.history.replaceState(null, '', window.location.pathname);
+        await fetch('/api/lab/me', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ owner: match[1] }),
+        });
+      }
+      const res = await fetch('/api/lab/me', { cache: 'no-store' });
+      const d = await res.json();
+      setOwner(d.owner || '');
+    }
+    boot().catch(() => setOwner(''));
   }, []);
+
+  function copySync() {
+    navigator.clipboard.writeText(`${window.location.origin}/lab#/sync/${owner}`).then(() => {
+      setSyncCopied(true);
+      setTimeout(() => setSyncCopied(false), 1500);
+    });
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -104,8 +126,8 @@ export default function LabHome() {
   }, []);
 
   useEffect(() => {
-    if (authorized) load();
-  }, [authorized, load]);
+    if (owner) load();
+  }, [owner, load]);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -155,17 +177,7 @@ export default function LabHome() {
   }
   const cal = calibration(cards);
 
-  if (authorized === null) return <main className="max-w-3xl mx-auto p-6 text-gray-500">Loading...</main>;
-  if (!authorized) {
-    return (
-      <main className="max-w-3xl mx-auto p-6">
-        <p className="mt-6 text-amber-700">需要管理员登录。用 <code>/lab#/admin/&lt;ADMIN_TOKEN&gt;</code> 打开一次即可。</p>
-        <p className="mt-4 text-sm text-gray-500">
-          原则页公开可看：<a href="/lab/principles" className="text-blue-600 hover:underline">/lab/principles</a>
-        </p>
-      </main>
-    );
-  }
+  if (owner === null) return <main className="max-w-3xl mx-auto p-6 text-gray-500">Loading...</main>;
 
   return (
     <main className="max-w-3xl mx-auto px-4 sm:px-6 py-6">
@@ -293,6 +305,16 @@ export default function LabHome() {
             </div>
           </section>
         ))}
+
+      <section className="mt-10 border-t border-gray-200 dark:border-gray-700 pt-4 text-xs text-gray-500 leading-relaxed">
+        <p>
+          观点卡跟着这个浏览器走，不需要登录。换手机/电脑继续用：
+          <button onClick={copySync} className="mx-1 text-blue-600 hover:underline">
+            {syncCopied ? '已复制' : '复制同步链接'}
+          </button>
+          在另一台设备打开即可。这个链接等于你的钥匙，别发给别人；想让朋友参与，用单张卡里的「朋友押注链接」。
+        </p>
+      </section>
     </main>
   );
 }
